@@ -51,6 +51,7 @@ let pendingChoreIcon = '⭐';
 let pendingPrizeIcon = '🎁';
 let iconPickerContext = null; // {type:'newChore'|'newPrize'|'editChore'|'editPrize', id?}
 let settingsTab = 'profile'; // 'profile' | 'points' | 'manual' | 'data'
+let manualEntryType = null; // null | 'school' | 'chore' | 'prize'
 
 /* ---------- persistence ---------- */
 function loadState(){
@@ -339,6 +340,8 @@ function buildPinPad(){
 /* ============ PARENT ZONE ============ */
 function openParent(){
   activeParentTab='approve';
+  settingsTab='profile';
+  manualEntryType=null;
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.ptab==='approve'));
   renderParentBody();
   document.getElementById('parentOverlay').classList.add('show');
@@ -471,11 +474,11 @@ function pickIcon(emoji){
 
 function parentSettingsHTML(){
   const tabs = `
-    <div class="tab-row settings-tab-row">
-      <button class="tab-btn ${settingsTab==='profile'?'active':''}" data-stab="profile">Profile</button>
-      <button class="tab-btn ${settingsTab==='points'?'active':''}" data-stab="points">Points &amp; Time</button>
-      <button class="tab-btn ${settingsTab==='manual'?'active':''}" data-stab="manual">Manual Entries</button>
-      <button class="tab-btn ${settingsTab==='data'?'active':''}" data-stab="data">Data</button>
+    <div class="subtab-row">
+      <button class="subtab-btn ${settingsTab==='profile'?'active':''}" data-stab="profile">Profile</button>
+      <button class="subtab-btn ${settingsTab==='points'?'active':''}" data-stab="points">Points &amp; Time</button>
+      <button class="subtab-btn ${settingsTab==='manual'?'active':''}" data-stab="manual">Manual Entries</button>
+      <button class="subtab-btn ${settingsTab==='data'?'active':''}" data-stab="data">Data</button>
     </div>`;
   let body;
   if(settingsTab==='points') body = settingsPointsHTML();
@@ -523,17 +526,65 @@ function settingsPointsHTML(){
 }
 
 function settingsManualHTML(){
-  const choreOptions = state.chores.map(c=>`<option value="${c.id}">${c.emoji} ${c.label} (+${c.points} pts)</option>`).join('');
-  const prizeOptions = state.prizes.map(p=>`<option value="${p.id}">${p.emoji} ${p.label} (−${p.cost} pts)</option>`).join('');
+  if(manualEntryType==='school') return manualSchoolFormHTML();
+  if(manualEntryType==='chore') return manualChoreFormHTML();
+  if(manualEntryType==='prize') return manualPrizeFormHTML();
+  return settingsManualMenuHTML();
+}
+
+function settingsManualMenuHTML(){
   return `
+    <div class="sheet-sub" style="margin-bottom:12px;">Add something that already happened, dated in the past. These apply right away — no approval needed.</div>
+    <div class="manual-grid">
+      <button class="manual-tile mt-school" data-manual-open="school">
+        <div class="manual-tile-ic">🎒</div>
+        <div class="manual-tile-text">
+          <div class="manual-tile-lbl">School Day</div>
+          <div class="manual-tile-sub">Backfill a missed day</div>
+        </div>
+        <div class="manual-tile-chev">›</div>
+      </button>
+      <button class="manual-tile mt-chore" data-manual-open="chore">
+        <div class="manual-tile-ic">✅</div>
+        <div class="manual-tile-text">
+          <div class="manual-tile-lbl">Chore</div>
+          <div class="manual-tile-sub">Credit a past completion</div>
+        </div>
+        <div class="manual-tile-chev">›</div>
+      </button>
+      <button class="manual-tile mt-prize" data-manual-open="prize">
+        <div class="manual-tile-ic">🎁</div>
+        <div class="manual-tile-text">
+          <div class="manual-tile-lbl">Redemption</div>
+          <div class="manual-tile-sub">Log a past prize redemption</div>
+        </div>
+        <div class="manual-tile-chev">›</div>
+      </button>
+    </div>
+  `;
+}
+
+function manualBackHTML(){
+  return `<button class="icon-btn-sm" id="manualBackBtn" style="margin-bottom:16px;">‹ Back</button>`;
+}
+
+function manualSchoolFormHTML(){
+  return `
+    ${manualBackHTML()}
     <div class="settings-label" style="margin-bottom:4px;">Add a missed school day</div>
     <div class="sheet-sub" style="margin-bottom:8px;">Counts toward that week's streak and can trigger the 5-day bonus.</div>
     <div class="add-row" style="flex-wrap:wrap;">
       <input type="date" id="missedSchoolDate" class="child-name-input" style="flex:1 1 100%;" max="${todayKey()}">
       <button class="btn btn-primary" id="addMissedSchoolBtn" style="margin-top:8px;">Add Missed Day</button>
     </div>
+  `;
+}
 
-    <div class="settings-label" style="margin:22px 0 4px;">Add a chore completion</div>
+function manualChoreFormHTML(){
+  const choreOptions = state.chores.map(c=>`<option value="${c.id}">${c.emoji} ${c.label} (+${c.points} pts)</option>`).join('');
+  return `
+    ${manualBackHTML()}
+    <div class="settings-label" style="margin-bottom:4px;">Add a chore completion</div>
     <div class="sheet-sub" style="margin-bottom:8px;">Credits points immediately — no approval needed.</div>
     ${state.chores.length===0 ? `<div class="sheet-sub">No chores set up yet.</div>` : `
     <div class="add-row" style="flex-wrap:wrap;">
@@ -541,8 +592,14 @@ function settingsManualHTML(){
       <input type="date" id="manualChoreDate" class="child-name-input" style="flex:1 1 100%; margin-top:8px;" max="${todayKey()}">
       <button class="btn btn-primary" id="addManualChoreBtn" style="margin-top:8px;">Add Chore Entry</button>
     </div>`}
+  `;
+}
 
-    <div class="settings-label" style="margin:22px 0 4px;">Add a prize redemption</div>
+function manualPrizeFormHTML(){
+  const prizeOptions = state.prizes.map(p=>`<option value="${p.id}">${p.emoji} ${p.label} (−${p.cost} pts)</option>`).join('');
+  return `
+    ${manualBackHTML()}
+    <div class="settings-label" style="margin-bottom:4px;">Add a prize redemption</div>
     <div class="sheet-sub" style="margin-bottom:8px;">Deducts points immediately (won't go below 0).</div>
     ${state.prizes.length===0 ? `<div class="sheet-sub">No prizes set up yet.</div>` : `
     <div class="add-row" style="flex-wrap:wrap;">
@@ -636,8 +693,13 @@ function wireParentBody(){
   });
 
   document.querySelectorAll('[data-stab]').forEach(b=>{
-    b.onclick=()=>{ settingsTab = b.dataset.stab; renderParentBody(); };
+    b.onclick=()=>{ settingsTab = b.dataset.stab; manualEntryType = null; renderParentBody(); };
   });
+  document.querySelectorAll('[data-manual-open]').forEach(b=>{
+    b.onclick=()=>{ manualEntryType = b.dataset.manualOpen; renderParentBody(); };
+  });
+  const manualBackBtn = document.getElementById('manualBackBtn');
+  if(manualBackBtn) manualBackBtn.onclick=()=>{ manualEntryType = null; renderParentBody(); };
 
   const addMissedSchoolBtn = document.getElementById('addMissedSchoolBtn');
   if(addMissedSchoolBtn) addMissedSchoolBtn.onclick=()=>{

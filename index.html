@@ -347,6 +347,17 @@
   }
   .tab-btn.active{background:var(--navy); color:#fff;}
 
+  .subtab-row{
+    display:flex; gap:20px; flex-wrap:wrap;
+    padding-top:2px; margin:-4px 4px 18px; border-bottom:1px solid #EEF3F4;
+  }
+  .subtab-btn{
+    background:none; border:none; padding:8px 1px 9px;
+    font-weight:800; font-size:13px; color:var(--ink-soft);
+    border-bottom:3px solid transparent; margin-bottom:-1px;
+  }
+  .subtab-btn.active{color:var(--teal);border-bottom-color:var(--teal);}
+
   /* FLOATING FEEDBACK */
   .floaters{position:fixed; inset:0; pointer-events:none; z-index:200;}
   .floater{
@@ -403,6 +414,23 @@
     font-size:22px; display:flex; align-items:center; justify-content:center;
   }
   .icon-grid button:active{transform:scale(.92); border-color:var(--teal-light);}
+
+  .manual-grid{display:flex; flex-direction:column; gap:14px; margin-top:2px;}
+  .manual-tile{
+    border:none; border-radius:var(--radius-lg); box-shadow:var(--shadow-sm);
+    padding:20px 18px; min-height:96px;
+    display:flex; align-items:center; gap:16px; text-align:left;
+    transition: transform 120ms ease;
+  }
+  .manual-tile:active{transform:scale(.97);}
+  .manual-tile-ic{font-size:38px; line-height:1; flex-shrink:0;}
+  .manual-tile-text{flex:1;}
+  .manual-tile-lbl{font-weight:800; font-size:17px; color:var(--ink);}
+  .manual-tile-sub{font-weight:700; font-size:12.5px; color:var(--ink-soft); margin-top:2px;}
+  .manual-tile-chev{font-size:24px; font-weight:800; color:var(--ink-soft); flex-shrink:0;}
+  .manual-tile.mt-school{background:linear-gradient(135deg, #FFE9D6 0%, var(--sand) 100%);}
+  .manual-tile.mt-chore{background:linear-gradient(135deg, #E3F7F4 0%, #C9EFE8 100%);}
+  .manual-tile.mt-prize{background:linear-gradient(135deg, #FFE3DC 0%, #FFD2C4 100%);}
 
   /* ---------- TABLET (portrait ~800px, landscape ~1280px on a 10.1in 1280x800 device) ---------- */
   @media (min-width:700px){
