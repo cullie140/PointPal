@@ -536,7 +536,7 @@ function prizesHTML(){
   if(state.prizes.length===0){
     return `<div class="empty-state"><div class="e">🎁</div>No prizes set up yet.</div>`;
   }
-  return state.prizes.map(p=>{
+  const cards = state.prizes.map(p=>{
     const pending = state.entries.some(e=>e.kind==='redeem' && e.refId===p.id && e.status==='pending');
     const affordable = state.points >= p.cost;
     return `
@@ -551,6 +551,7 @@ function prizesHTML(){
       </button>
     </div>`;
   }).join('');
+  return `<div class="prize-list">${cards}</div>`;
 }
 
 function historyItemRowHTML(e){

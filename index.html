@@ -180,10 +180,11 @@
   .streak-dot.filled{background:var(--coral);}
 
   /* PRIZES */
+  .prize-list{display:flex; flex-direction:column; gap:12px;}
   .prize-card{
     background:var(--card); border-radius:var(--radius-md); padding:16px;
     box-shadow:var(--shadow-sm); display:flex; align-items:center; gap:14px;
-    margin-bottom:12px; border:2px solid transparent;
+    border:2px solid transparent;
     transition: transform 120ms ease;
   }
   .prize-card:active{transform:scale(.97);}
@@ -387,6 +388,16 @@
   .add-row input{flex:1;}
   .list-edit-item{display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #EEF3F4;}
   .list-edit-item span{flex:1; font-weight:700; font-size:14px;}
+
+  /* ---------- TABLET (portrait ~800px, landscape ~1280px on a 10.1in 1280x800 device) ---------- */
+  @media (min-width:700px){
+    #app, .navbar, .sheet{ max-width:700px; }
+  }
+  @media (min-width:1000px){
+    #app, .navbar, .sheet{ max-width:940px; }
+    .grid{ grid-template-columns:repeat(3, 1fr); }
+    .prize-list{ display:grid; grid-template-columns:repeat(2, 1fr); }
+  }
 </style>
 </head>
 <body>
