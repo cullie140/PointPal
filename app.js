@@ -33,6 +33,9 @@ let view = 'home';
 let pinContext = null;   // 'unlock' -> opens parent overlay
 let pinBuffer = '';
 let activeParentTab = 'approve';
+let historyMode = 'week';     // 'week' | 'month'
+let historyWeekOffset = 0;    // 0 = this week, -1 = last week, ...
+let historyMonthOffset = 0;   // 0 = this month, -1 = last month, ...
 
 /* ---------- persistence ---------- */
 function loadState(){
@@ -64,6 +67,8 @@ function getMonday(d){
   return nd;
 }
 function weekKeyFor(d){ return dateKey(getMonday(d)); }
+function addDays(d, n){ const nd = new Date(d); nd.setDate(nd.getDate()+n); return nd; }
+function daysInMonthCount(y, m){ return new Date(y, m+1, 0).getDate(); }
 function ensureWeek(){
   const wk = weekKeyFor(new Date());
   if(state.weekStart !== wk){
@@ -76,6 +81,9 @@ function ensureWeek(){
 function entriesToday(kind, refId){
   const tk = todayKey();
   return state.entries.filter(e => e.kind===kind && (refId===undefined || e.refId===refId) && dateKey(new Date(e.ts))===tk);
+}
+function entriesForDay(dk){
+  return state.entries.filter(e => dateKey(new Date(e.ts))===dk).sort((a,b)=>a.ts-b.ts);
 }
 function goodDaysThisWeekApproved(){
   const wk = state.weekStart;
@@ -536,28 +544,131 @@ function prizesHTML(){
   }).join('');
 }
 
+function historyItemRowHTML(e){
+  let amtClass='wait', amtText='';
+  const cur = e.currency==='points'?'pts':'min';
+  const sign = e.kind==='redeem' ? '−' : '+';
+  if(e.status==='approved'){ amtClass = e.kind==='redeem'?'neg':'pos'; amtText=`${sign}${e.amount} ${cur}`; }
+  else if(e.status==='pending'){ amtClass='wait'; amtText=`${sign}${e.amount} ${cur} · pending`; }
+  else { amtClass='deny'; amtText=`${sign}${e.amount} ${cur} · denied`; }
+  return `
+  <div class="history-item">
+    <div class="history-emoji">${e.emoji}</div>
+    <div class="history-info">
+      <div class="history-label">${e.label}</div>
+      <div class="history-meta">${timeAgo(e.ts)}</div>
+    </div>
+    <div class="history-amount ${amtClass}">${amtText}</div>
+  </div>`;
+}
+
 function historyHTML(){
-  const list = [...state.entries].sort((a,b)=>b.ts-a.ts);
-  if(list.length===0){
-    return `<div class="empty-state"><div class="e">📖</div>Nothing yet — go do something awesome!</div>`;
-  }
-  return list.map(e=>{
-    let amtClass='wait', amtText='';
-    const cur = e.currency==='points'?'pts':'min';
-    const sign = e.kind==='redeem' ? '−' : '+';
-    if(e.status==='approved'){ amtClass = e.kind==='redeem'?'neg':'pos'; amtText=`${sign}${e.amount} ${cur}`; }
-    else if(e.status==='pending'){ amtClass='wait'; amtText=`${sign}${e.amount} ${cur} · pending`; }
-    else { amtClass='deny'; amtText=`${sign}${e.amount} ${cur} · denied`; }
-    return `
-    <div class="history-item">
-      <div class="history-emoji">${e.emoji}</div>
-      <div class="history-info">
-        <div class="history-label">${e.label}</div>
-        <div class="history-meta">${timeAgo(e.ts)}</div>
-      </div>
-      <div class="history-amount ${amtClass}">${amtText}</div>
+  const tabs = `
+    <div class="tab-row">
+      <button class="tab-btn ${historyMode==='week'?'active':''}" data-hmode="week">Week</button>
+      <button class="tab-btn ${historyMode==='month'?'active':''}" data-hmode="month">Month</button>
     </div>`;
+  return tabs + (historyMode==='week' ? weekViewHTML() : monthViewHTML());
+}
+
+function weekViewHTML(){
+  const monday = getMonday(addDays(new Date(), historyWeekOffset*7));
+  const sunday = addDays(monday, 6);
+  const label = `${monday.toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${sunday.toLocaleDateString(undefined,{month:'short',day:'numeric'})}`;
+  const rows = Array.from({length:7}).map((_,i)=>dayRowHTML(addDays(monday,i))).join('');
+  return `
+    <div class="cal-nav">
+      <button class="cal-nav-btn" data-week-nav="-1">‹</button>
+      <div class="cal-nav-label">${label}${historyWeekOffset===0?' <span class="tag">This week</span>':''}</div>
+      <button class="cal-nav-btn" data-week-nav="1">›</button>
+    </div>
+    <div class="week-list">${rows}</div>
+  `;
+}
+
+function dayRowHTML(d){
+  const dk = dateKey(d);
+  const entries = entriesForDay(dk);
+  const isToday = dk===todayKey();
+  const chips = entries.map(e=>{
+    const sign = e.kind==='redeem' ? '−' : '+';
+    const cur = e.currency==='points' ? 'pts' : 'min';
+    let cls = 'chip-wait';
+    if(e.status==='approved') cls = e.kind==='redeem' ? 'chip-neg' : 'chip-pos';
+    else if(e.status==='denied') cls = 'chip-deny';
+    return `<span class="day-chip ${cls}">${e.emoji}<b>${sign}${e.amount} ${cur}</b></span>`;
   }).join('');
+  return `
+    <button class="day-row ${isToday?'today':''}" data-day="${dk}">
+      <div class="day-row-date">
+        <div class="day-row-dow">${d.toLocaleDateString(undefined,{weekday:'short'})}</div>
+        <div class="day-row-num">${d.getDate()}</div>
+      </div>
+      <div class="day-row-chips">${chips || '<span class="day-row-empty">Nothing yet</span>'}</div>
+    </button>
+  `;
+}
+
+function monthViewHTML(){
+  const base = new Date();
+  base.setDate(1);
+  base.setMonth(base.getMonth()+historyMonthOffset);
+  const y = base.getFullYear(), m = base.getMonth();
+  const label = base.toLocaleDateString(undefined,{month:'long', year:'numeric'});
+  const firstDow = new Date(y, m, 1).getDay();
+  const numDays = daysInMonthCount(y, m);
+
+  const cells = [];
+  for(let i=0;i<firstDow;i++) cells.push(null);
+  for(let d=1; d<=numDays; d++) cells.push(new Date(y, m, d));
+  while(cells.length % 7 !== 0) cells.push(null);
+
+  const dowHeader = ['S','M','T','W','T','F','S'].map(d=>`<div class="cal-dow">${d}</div>`).join('');
+  const cellsHTML = cells.map(d=>{
+    if(!d) return `<div class="cal-cell empty"></div>`;
+    const dk = dateKey(d);
+    const approved = entriesForDay(dk).filter(e=>e.status==='approved');
+    let earnedPts=0, redeemedPts=0;
+    approved.forEach(e=>{
+      if(e.kind==='redeem') redeemedPts += e.amount;
+      else if(e.currency==='points') earnedPts += e.amount;
+    });
+    const isToday = dk===todayKey();
+    const hasActivity = earnedPts>0 || redeemedPts>0;
+    return `
+      <button class="cal-cell ${isToday?'today':''} ${hasActivity?'has-activity':''}" data-day="${dk}">
+        <div class="cal-cell-num">${d.getDate()}</div>
+        ${earnedPts>0?`<div class="cal-cell-amt pos">+${earnedPts}</div>`:''}
+        ${redeemedPts>0?`<div class="cal-cell-amt neg">−${redeemedPts}</div>`:''}
+      </button>`;
+  }).join('');
+
+  return `
+    <div class="cal-nav">
+      <button class="cal-nav-btn" data-month-nav="-1">‹</button>
+      <div class="cal-nav-label">${label}</div>
+      <button class="cal-nav-btn" data-month-nav="1">›</button>
+    </div>
+    <div class="cal-grid cal-dow-row">${dowHeader}</div>
+    <div class="cal-grid">${cellsHTML}</div>
+  `;
+}
+
+function dayDetailHTML(dk){
+  const entries = entriesForDay(dk);
+  if(entries.length===0){
+    return `<div class="empty-state"><div class="e">📭</div>Nothing this day.</div>`;
+  }
+  return entries.map(historyItemRowHTML).join('');
+}
+
+function openDay(dk){
+  document.getElementById('dayTitle').textContent = new Date(dk+'T00:00:00').toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'});
+  document.getElementById('dayBody').innerHTML = dayDetailHTML(dk);
+  document.getElementById('dayOverlay').classList.add('show');
+}
+function closeDay(){
+  document.getElementById('dayOverlay').classList.remove('show');
 }
 
 function wireMainContent(){
@@ -568,6 +679,19 @@ function wireMainContent(){
   if(schoolBtn) schoolBtn.onclick=(ev)=>requestSchoolDay(ev);
   document.querySelectorAll('[data-prize]').forEach(b=>{
     b.onclick=(ev)=>requestPrize(b.dataset.prize, ev);
+  });
+
+  document.querySelectorAll('[data-hmode]').forEach(b=>{
+    b.onclick=()=>{ historyMode = b.dataset.hmode; render(); };
+  });
+  document.querySelectorAll('[data-week-nav]').forEach(b=>{
+    b.onclick=()=>{ historyWeekOffset += parseInt(b.dataset.weekNav); render(); };
+  });
+  document.querySelectorAll('[data-month-nav]').forEach(b=>{
+    b.onclick=()=>{ historyMonthOffset += parseInt(b.dataset.monthNav); render(); };
+  });
+  document.querySelectorAll('[data-day]').forEach(b=>{
+    b.onclick=()=>openDay(b.dataset.day);
   });
 }
 
@@ -667,6 +791,8 @@ document.querySelectorAll('[data-ptab]').forEach(b=>{
 });
 document.getElementById('pinOverlay').addEventListener('click', (e)=>{ if(e.target.id==='pinOverlay') closePin(); });
 document.getElementById('parentOverlay').addEventListener('click', (e)=>{ if(e.target.id==='parentOverlay') closeParent(); });
+document.getElementById('dayClose').addEventListener('click', closeDay);
+document.getElementById('dayOverlay').addEventListener('click', (e)=>{ if(e.target.id==='dayOverlay') closeDay(); });
 
 buildPinPad();
 ensureWeek();

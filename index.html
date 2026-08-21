@@ -214,6 +214,55 @@
   .history-amount.wait{color:var(--gold-deep);}
   .history-amount.deny{color:var(--danger); text-decoration:line-through; opacity:.7;}
 
+  /* CALENDAR */
+  .cal-nav{display:flex; align-items:center; justify-content:space-between; margin:4px 4px 14px;}
+  .cal-nav-btn{
+    width:36px; height:36px; border-radius:50%; border:none; background:var(--card);
+    box-shadow:var(--shadow-sm); font-size:18px; font-weight:800; color:var(--navy);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .cal-nav-btn:active{transform:scale(.92);}
+  .cal-nav-label{font-weight:800; font-size:15px; color:var(--ink); display:flex; align-items:center; gap:8px;}
+
+  .week-list{display:flex; flex-direction:column; gap:10px;}
+  .day-row{
+    width:100%; background:var(--card); border-radius:var(--radius-md); padding:12px 14px;
+    display:flex; align-items:center; gap:12px; box-shadow:var(--shadow-sm);
+    border:2px solid transparent; text-align:left;
+  }
+  .day-row.today{border-color:var(--teal-light);}
+  .day-row-date{width:40px; text-align:center; flex-shrink:0;}
+  .day-row-dow{font-size:10.5px; font-weight:800; color:var(--ink-soft); text-transform:uppercase;}
+  .day-row-num{font-size:18px; font-weight:800; font-family:'Baloo 2'; color:var(--ink);}
+  .day-row.today .day-row-num{color:var(--teal);}
+  .day-row-chips{flex:1; display:flex; flex-wrap:wrap; gap:6px;}
+  .day-row-empty{color:var(--ink-soft); font-size:13px; font-weight:700;}
+  .day-chip{
+    display:inline-flex; align-items:center; gap:4px; font-size:12px; font-weight:800;
+    padding:4px 8px; border-radius:20px; background:var(--bg); color:var(--ink-soft);
+  }
+  .day-chip.chip-pos{background:#EAFBEF; color:var(--success);}
+  .day-chip.chip-neg{background:#FFF0ED; color:var(--coral-deep);}
+  .day-chip.chip-wait{background:#FFF8EA; color:var(--gold-deep);}
+  .day-chip.chip-deny{background:#FFF0F1; color:var(--danger); opacity:.7; text-decoration:line-through;}
+
+  .cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:6px;}
+  .cal-dow-row{margin-bottom:6px;}
+  .cal-dow{text-align:center; font-size:11px; font-weight:800; color:var(--ink-soft); text-transform:uppercase;}
+  .cal-cell{
+    aspect-ratio:1; background:var(--card); border-radius:12px; border:2px solid transparent;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+    box-shadow:var(--shadow-sm); padding:4px 2px;
+  }
+  .cal-cell.empty{background:transparent; box-shadow:none;}
+  .cal-cell.today{border-color:var(--teal-light);}
+  .cal-cell.has-activity{background:#F7FDFB;}
+  .cal-cell-num{font-size:13px; font-weight:800; color:var(--ink);}
+  .cal-cell.today .cal-cell-num{color:var(--teal);}
+  .cal-cell-amt{font-size:10px; font-weight:800; line-height:1.25;}
+  .cal-cell-amt.pos{color:var(--success);}
+  .cal-cell-amt.neg{color:var(--coral-deep);}
+
   .empty-state{text-align:center; padding:40px 20px; color:var(--ink-soft);}
   .empty-state .e{font-size:40px; margin-bottom:8px;}
 
@@ -276,8 +325,10 @@
   .approval-label{font-weight:800; font-size:15px;}
   .approval-amount{font-weight:800; font-size:15px;}
   .approval-meta{font-size:12px; color:var(--ink-soft); font-weight:700; margin-bottom:10px;}
-  .approval-actions{display:flex; gap:10px;}
-  .approval-actions .btn{margin-top:0; flex:1; padding:11px;}
+  .approval-actions{display:flex; gap:0;}
+  .approval-actions .btn{margin-top:0; flex:1; padding:11px; border-radius:0;}
+  .approval-actions .btn-approve{border-radius:16px 0 0 16px; box-shadow:inset -1px 0 0 rgba(255,255,255,0.35);}
+  .approval-actions .btn-deny{border-radius:0 16px 16px 0;}
 
   .settings-row{
     display:flex; justify-content:space-between; align-items:center;
@@ -403,6 +454,16 @@
     </div>
     <div id="parentBody"></div>
     <button class="btn btn-ghost" id="parentClose">Close</button>
+  </div>
+</div>
+
+<!-- DAY DETAIL OVERLAY -->
+<div class="overlay" id="dayOverlay">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title" id="dayTitle">Day</div>
+    <div id="dayBody"></div>
+    <button class="btn btn-ghost" id="dayClose">Close</button>
   </div>
 </div>
 
