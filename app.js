@@ -50,6 +50,7 @@ let historyMonthOffset = 0;   // 0 = this month, -1 = last month, ...
 let pendingChoreIcon = '⭐';
 let pendingPrizeIcon = '🎁';
 let iconPickerContext = null; // {type:'newChore'|'newPrize'|'editChore'|'editPrize', id?}
+let settingsTab = 'profile'; // 'profile' | 'points' | 'manual' | 'data'
 
 /* ---------- persistence ---------- */
 function loadState(){
@@ -155,11 +156,17 @@ function requestSchoolDay(evt){
   render();
 }
 
-function addPastSchoolDay(dateStr){
-  if(!dateStr) return;
+function pastDateOrToast(dateStr){
+  if(!dateStr){ toast('Pick a date'); return null; }
   const d = new Date(dateStr+'T12:00:00');
+  if(dateKey(d) > todayKey()){ toast('Pick today or an earlier date'); return null; }
+  return d;
+}
+
+function addPastSchoolDay(dateStr){
+  const d = pastDateOrToast(dateStr);
+  if(!d) return;
   const dk = dateKey(d);
-  if(dk > todayKey()){ toast('Pick today or an earlier date'); return; }
   const already = entriesForDay(dk).some(e=>e.kind==='school' && e.status!=='denied');
   if(already){ toast('That day already has a school entry'); return; }
 
@@ -182,6 +189,41 @@ function addPastSchoolDay(dateStr){
   } else {
     toast('Added a Good Day at School ✅');
   }
+  saveState(); renderParentBody(); render();
+}
+
+function addPastChore(choreId, dateStr){
+  const chore = state.chores.find(c=>c.id===choreId);
+  if(!chore) return;
+  const d = pastDateOrToast(dateStr);
+  if(!d) return;
+  const dk = dateKey(d);
+  if(!chore.repeatable){
+    const already = entriesForDay(dk).some(e=>e.kind==='chore' && e.refId===choreId && e.status!=='denied');
+    if(already){ toast(`${chore.label} already has an entry that day`); return; }
+  }
+  state.entries.push({
+    id:uid(), ts:d.getTime(), kind:'chore', refId:choreId,
+    label:chore.label, emoji:chore.emoji, currency:'points', amount:chore.points, status:'approved'
+  });
+  state.points += chore.points;
+  toast(`Added "${chore.label}" ✅`);
+  saveState(); renderParentBody(); render();
+}
+
+function addPastPrizeRedemption(prizeId, dateStr){
+  const prize = state.prizes.find(p=>p.id===prizeId);
+  if(!prize) return;
+  const d = pastDateOrToast(dateStr);
+  if(!d) return;
+  state.entries.push({
+    id:uid(), ts:d.getTime(), kind:'redeem', refId:prizeId,
+    label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'approved',
+    grantsMinutes: prize.grantsMinutes || 0
+  });
+  state.points = Math.max(0, state.points - prize.cost);
+  if(prize.grantsMinutes) state.minutes += prize.grantsMinutes;
+  toast(`Added "${prize.label}" redemption`);
   saveState(); renderParentBody(); render();
 }
 
@@ -428,6 +470,22 @@ function pickIcon(emoji){
 }
 
 function parentSettingsHTML(){
+  const tabs = `
+    <div class="tab-row settings-tab-row">
+      <button class="tab-btn ${settingsTab==='profile'?'active':''}" data-stab="profile">Profile</button>
+      <button class="tab-btn ${settingsTab==='points'?'active':''}" data-stab="points">Points &amp; Time</button>
+      <button class="tab-btn ${settingsTab==='manual'?'active':''}" data-stab="manual">Manual Entries</button>
+      <button class="tab-btn ${settingsTab==='data'?'active':''}" data-stab="data">Data</button>
+    </div>`;
+  let body;
+  if(settingsTab==='points') body = settingsPointsHTML();
+  else if(settingsTab==='manual') body = settingsManualHTML();
+  else if(settingsTab==='data') body = settingsDataHTML();
+  else body = settingsProfileHTML();
+  return tabs + body;
+}
+
+function settingsProfileHTML(){
   return `
     <div class="settings-row">
       <div class="settings-label">Child's name</div>
@@ -439,7 +497,13 @@ function parentSettingsHTML(){
     </div>
     <input class="child-name-input" id="newPinInput" placeholder="New 4-digit PIN" maxlength="4" inputmode="numeric">
 
-    <div class="settings-row" style="margin-top:18px;">
+    <button class="btn btn-primary" id="saveSettingsBtn" style="margin-top:18px;">Save Settings</button>
+  `;
+}
+
+function settingsPointsHTML(){
+  return `
+    <div class="settings-row">
       <div class="settings-label">Points balance</div>
       <div style="display:flex; gap:8px; align-items:center;">
         <button class="icon-btn-sm" data-adjust="points:-10">−10</button>
@@ -455,18 +519,45 @@ function parentSettingsHTML(){
         <button class="icon-btn-sm" data-adjust="minutes:5">+5</button>
       </div>
     </div>
+  `;
+}
 
-    <div class="settings-row" style="margin-top:18px;">
-      <div class="settings-label">Add a missed school day</div>
-    </div>
-    <div class="sheet-sub" style="margin-bottom:8px;">Forgot to tap "Good Day at School"? Add it here — it counts toward that week's streak and can trigger the 5-day bonus.</div>
+function settingsManualHTML(){
+  const choreOptions = state.chores.map(c=>`<option value="${c.id}">${c.emoji} ${c.label} (+${c.points} pts)</option>`).join('');
+  const prizeOptions = state.prizes.map(p=>`<option value="${p.id}">${p.emoji} ${p.label} (−${p.cost} pts)</option>`).join('');
+  return `
+    <div class="settings-label" style="margin-bottom:4px;">Add a missed school day</div>
+    <div class="sheet-sub" style="margin-bottom:8px;">Counts toward that week's streak and can trigger the 5-day bonus.</div>
     <div class="add-row" style="flex-wrap:wrap;">
       <input type="date" id="missedSchoolDate" class="child-name-input" style="flex:1 1 100%;" max="${todayKey()}">
       <button class="btn btn-primary" id="addMissedSchoolBtn" style="margin-top:8px;">Add Missed Day</button>
     </div>
 
-    <button class="btn btn-primary" id="saveSettingsBtn" style="margin-top:18px;">Save Settings</button>
-    <button class="btn btn-deny" id="resetAllBtn" style="margin-top:10px;">Reset All Data</button>
+    <div class="settings-label" style="margin:22px 0 4px;">Add a chore completion</div>
+    <div class="sheet-sub" style="margin-bottom:8px;">Credits points immediately — no approval needed.</div>
+    ${state.chores.length===0 ? `<div class="sheet-sub">No chores set up yet.</div>` : `
+    <div class="add-row" style="flex-wrap:wrap;">
+      <select id="manualChoreSelect" class="child-name-input" style="flex:1 1 100%;">${choreOptions}</select>
+      <input type="date" id="manualChoreDate" class="child-name-input" style="flex:1 1 100%; margin-top:8px;" max="${todayKey()}">
+      <button class="btn btn-primary" id="addManualChoreBtn" style="margin-top:8px;">Add Chore Entry</button>
+    </div>`}
+
+    <div class="settings-label" style="margin:22px 0 4px;">Add a prize redemption</div>
+    <div class="sheet-sub" style="margin-bottom:8px;">Deducts points immediately (won't go below 0).</div>
+    ${state.prizes.length===0 ? `<div class="sheet-sub">No prizes set up yet.</div>` : `
+    <div class="add-row" style="flex-wrap:wrap;">
+      <select id="manualPrizeSelect" class="child-name-input" style="flex:1 1 100%;">${prizeOptions}</select>
+      <input type="date" id="manualPrizeDate" class="child-name-input" style="flex:1 1 100%; margin-top:8px;" max="${todayKey()}">
+      <button class="btn btn-primary" id="addManualPrizeBtn" style="margin-top:8px;">Add Redemption</button>
+    </div>`}
+  `;
+}
+
+function settingsDataHTML(){
+  return `
+    <div class="settings-label" style="margin-bottom:8px;">Danger Zone</div>
+    <div class="sheet-sub" style="margin-bottom:12px;">This erases all points, minutes, and history. This can't be undone.</div>
+    <button class="btn btn-deny" id="resetAllBtn">Reset All Data</button>
   `;
 }
 
@@ -544,9 +635,21 @@ function wireParentBody(){
     };
   });
 
+  document.querySelectorAll('[data-stab]').forEach(b=>{
+    b.onclick=()=>{ settingsTab = b.dataset.stab; renderParentBody(); };
+  });
+
   const addMissedSchoolBtn = document.getElementById('addMissedSchoolBtn');
   if(addMissedSchoolBtn) addMissedSchoolBtn.onclick=()=>{
     addPastSchoolDay(document.getElementById('missedSchoolDate').value);
+  };
+  const addManualChoreBtn = document.getElementById('addManualChoreBtn');
+  if(addManualChoreBtn) addManualChoreBtn.onclick=()=>{
+    addPastChore(document.getElementById('manualChoreSelect').value, document.getElementById('manualChoreDate').value);
+  };
+  const addManualPrizeBtn = document.getElementById('addManualPrizeBtn');
+  if(addManualPrizeBtn) addManualPrizeBtn.onclick=()=>{
+    addPastPrizeRedemption(document.getElementById('manualPrizeSelect').value, document.getElementById('manualPrizeDate').value);
   };
 
   const saveBtn = document.getElementById('saveSettingsBtn');
