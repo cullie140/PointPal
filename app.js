@@ -155,6 +155,36 @@ function requestSchoolDay(evt){
   render();
 }
 
+function addPastSchoolDay(dateStr){
+  if(!dateStr) return;
+  const d = new Date(dateStr+'T12:00:00');
+  const dk = dateKey(d);
+  if(dk > todayKey()){ toast('Pick today or an earlier date'); return; }
+  const already = entriesForDay(dk).some(e=>e.kind==='school' && e.status!=='denied');
+  if(already){ toast('That day already has a school entry'); return; }
+
+  state.entries.push({
+    id:uid(), ts:d.getTime(), kind:'school', refId:'school',
+    label:'Good Day at School', emoji:'🎒', currency:'minutes', amount:15, status:'approved'
+  });
+  state.minutes += 15;
+
+  const wk = weekKeyFor(d);
+  const goodDays = state.entries.filter(e=>e.kind==='school' && e.status==='approved' && weekKeyFor(new Date(e.ts))===wk).length;
+  const bonusAlready = state.entries.some(e=>e.kind==='bonus' && weekKeyFor(new Date(e.ts))===wk);
+  if(goodDays>=5 && !bonusAlready){
+    state.entries.push({
+      id:uid(), ts:d.getTime(), kind:'bonus', refId:'bonus',
+      label:'5-Day Streak Bonus!', emoji:'🏆', currency:'minutes', amount:120, status:'approved'
+    });
+    state.minutes += 120;
+    toast('5 good days that week — bonus added! 🏆');
+  } else {
+    toast('Added a Good Day at School ✅');
+  }
+  saveState(); renderParentBody(); render();
+}
+
 function requestPrize(prizeId, evt){
   const prize = state.prizes.find(p=>p.id===prizeId);
   if(!prize) return;
@@ -426,6 +456,15 @@ function parentSettingsHTML(){
       </div>
     </div>
 
+    <div class="settings-row" style="margin-top:18px;">
+      <div class="settings-label">Add a missed school day</div>
+    </div>
+    <div class="sheet-sub" style="margin-bottom:8px;">Forgot to tap "Good Day at School"? Add it here — it counts toward that week's streak and can trigger the 5-day bonus.</div>
+    <div class="add-row" style="flex-wrap:wrap;">
+      <input type="date" id="missedSchoolDate" class="child-name-input" style="flex:1 1 100%;" max="${todayKey()}">
+      <button class="btn btn-primary" id="addMissedSchoolBtn" style="margin-top:8px;">Add Missed Day</button>
+    </div>
+
     <button class="btn btn-primary" id="saveSettingsBtn" style="margin-top:18px;">Save Settings</button>
     <button class="btn btn-deny" id="resetAllBtn" style="margin-top:10px;">Reset All Data</button>
   `;
@@ -504,6 +543,11 @@ function wireParentBody(){
       saveState(); renderParentBody(); render();
     };
   });
+
+  const addMissedSchoolBtn = document.getElementById('addMissedSchoolBtn');
+  if(addMissedSchoolBtn) addMissedSchoolBtn.onclick=()=>{
+    addPastSchoolDay(document.getElementById('missedSchoolDate').value);
+  };
 
   const saveBtn = document.getElementById('saveSettingsBtn');
   if(saveBtn) saveBtn.onclick=()=>{
