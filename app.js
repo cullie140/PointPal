@@ -391,7 +391,7 @@ function parentChoresHTML(){
   const rows = state.chores.map(c=>`
     <div class="list-edit-item">
       <button class="icon-swatch" data-edit-chore-icon="${c.id}">${c.emoji}</button>
-      <span>${c.label}</span>
+      <input class="settings-input label-edit" data-chore-label="${c.id}" value="${c.label}">
       <label style="display:flex; align-items:center; gap:5px; font-weight:700; font-size:12px; color:var(--ink-soft); white-space:nowrap;">
         <input type="checkbox" data-chore-repeat="${c.id}" ${c.repeatable?'checked':''}> Repeatable
       </label>
@@ -400,7 +400,7 @@ function parentChoresHTML(){
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Points update live. Tap an icon to change it. Removing a chore doesn't erase past history.</div>
+    <div class="sheet-sub">Names, points, and icons all update live. Removing a chore doesn't erase past history.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
       <button class="icon-swatch" id="newChoreIconBtn" style="margin-top:10px;">${pendingChoreIcon}</button>
@@ -418,13 +418,14 @@ function parentPrizesHTML(){
   const rows = state.prizes.map(p=>`
     <div class="list-edit-item">
       <button class="icon-swatch" data-edit-prize-icon="${p.id}">${p.emoji}</button>
-      <span>${p.label}${p.grantsMinutes?` <small style="color:var(--coral-deep); font-weight:800;">(+${p.grantsMinutes} min)</small>`:''}</span>
+      <input class="settings-input label-edit" data-prize-label="${p.id}" value="${p.label}">
+      <input class="settings-input" type="number" min="0" data-prize-minutes="${p.id}" value="${p.grantsMinutes||0}" title="Bonus minutes granted" style="width:56px;">
       <input class="settings-input" type="number" min="0" data-prize-cost="${p.id}" value="${p.cost}">
       <button class="icon-btn-sm" data-prize-del="${p.id}">Remove</button>
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Costs update live. Tap an icon to change it. Add "grants minutes" prizes for electronics-time purchases.</div>
+    <div class="sheet-sub">Names, costs, bonus minutes, and icons all update live.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
       <button class="icon-swatch" id="newPrizeIconBtn" style="margin-top:10px;">${pendingPrizeIcon}</button>
@@ -622,6 +623,14 @@ function wireParentBody(){
   document.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>approveEntry(b.dataset.approve));
   document.querySelectorAll('[data-deny]').forEach(b=>b.onclick=()=>denyEntry(b.dataset.deny));
 
+  document.querySelectorAll('[data-chore-label]').forEach(inp=>{
+    inp.onchange=()=>{
+      const c = state.chores.find(x=>x.id===inp.dataset.choreLabel);
+      if(!c) return;
+      const val = inp.value.trim();
+      if(val){ c.label = val; saveState(); render(); } else { inp.value = c.label; }
+    };
+  });
   document.querySelectorAll('[data-chore-points]').forEach(inp=>{
     inp.onchange=()=>{
       const c = state.chores.find(x=>x.id===inp.dataset.chorePoints);
@@ -656,6 +665,23 @@ function wireParentBody(){
     saveState(); renderParentBody(); render();
   };
 
+  document.querySelectorAll('[data-prize-label]').forEach(inp=>{
+    inp.onchange=()=>{
+      const p = state.prizes.find(x=>x.id===inp.dataset.prizeLabel);
+      if(!p) return;
+      const val = inp.value.trim();
+      if(val){ p.label = val; saveState(); render(); } else { inp.value = p.label; }
+    };
+  });
+  document.querySelectorAll('[data-prize-minutes]').forEach(inp=>{
+    inp.onchange=()=>{
+      const p = state.prizes.find(x=>x.id===inp.dataset.prizeMinutes);
+      if(!p) return;
+      const mins = parseInt(inp.value);
+      p.grantsMinutes = mins > 0 ? mins : undefined;
+      saveState();
+    };
+  });
   document.querySelectorAll('[data-prize-cost]').forEach(inp=>{
     inp.onchange=()=>{
       const p = state.prizes.find(x=>x.id===inp.dataset.prizeCost);
