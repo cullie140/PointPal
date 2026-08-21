@@ -12,7 +12,7 @@ const DEFAULT_STATE = {
   chores: [
     { id:'dishes',   label:'Dishes',             emoji:'🍽️', points:5,  repeatable:false },
     { id:'brush',    label:'Brush Teeth',        emoji:'🪥', points:5,  repeatable:false },
-    { id:'wipe',     label:'Wipe Butt',          emoji:'🧻', points:5,  repeatable:false },
+    { id:'wipe',     label:'Wipe Butt',          emoji:'🧻', points:5,  repeatable:true  },
     { id:'shower',   label:'Shower',             emoji:'🚿', points:10, repeatable:false },
     { id:'dressed',  label:'Get Up & Dressed',   emoji:'👕', points:10, repeatable:false },
     { id:'worksheet',label:'Worksheet',          emoji:'📝', points:1,  repeatable:true  },
@@ -284,7 +284,10 @@ function parentApproveHTML(){
 function parentChoresHTML(){
   const rows = state.chores.map(c=>`
     <div class="list-edit-item">
-      <span>${c.emoji} ${c.label} ${c.repeatable?'<small style="color:var(--teal); font-weight:800;">(repeatable)</small>':''}</span>
+      <span>${c.emoji} ${c.label}</span>
+      <label style="display:flex; align-items:center; gap:5px; font-weight:700; font-size:12px; color:var(--ink-soft); white-space:nowrap;">
+        <input type="checkbox" data-chore-repeat="${c.id}" ${c.repeatable?'checked':''}> Repeatable
+      </label>
       <input class="settings-input" type="number" min="0" data-chore-points="${c.id}" value="${c.points}">
       <button class="icon-btn-sm" data-chore-del="${c.id}">Remove</button>
     </div>
@@ -365,6 +368,12 @@ function wireParentBody(){
     inp.onchange=()=>{
       const c = state.chores.find(x=>x.id===inp.dataset.chorePoints);
       if(c){ c.points = parseInt(inp.value)||0; saveState(); }
+    };
+  });
+  document.querySelectorAll('[data-chore-repeat]').forEach(inp=>{
+    inp.onchange=()=>{
+      const c = state.chores.find(x=>x.id===inp.dataset.choreRepeat);
+      if(c){ c.repeatable = inp.checked; saveState(); render(); }
     };
   });
   document.querySelectorAll('[data-chore-del]').forEach(b=>{
