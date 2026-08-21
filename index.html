@@ -395,6 +395,27 @@
   }
   .toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
 
+  .undo-toast{
+    position:fixed; right:16px; bottom:calc(90px + env(safe-area-inset-bottom));
+    background:var(--navy); color:#fff; border-radius:16px; padding:12px 14px 15px;
+    display:flex; align-items:center; gap:12px; box-shadow:var(--shadow);
+    z-index:400; max-width:calc(100% - 32px);
+    opacity:0; pointer-events:none; transform:translateY(10px);
+    transition:opacity 200ms ease, transform 200ms ease;
+  }
+  .undo-toast.show{opacity:1; pointer-events:auto; transform:translateY(0);}
+  .undo-toast-msg{font-weight:700; font-size:13.5px;}
+  .undo-toast-btn{
+    background:rgba(255,255,255,.16); color:#fff; border:none; border-radius:12px;
+    padding:8px 14px; font-weight:800; font-size:13px; white-space:nowrap; flex-shrink:0;
+  }
+  .undo-toast-btn:active{transform:scale(.95);}
+  .undo-toast-bar-track{
+    position:absolute; left:14px; right:14px; bottom:5px; height:3px;
+    background:rgba(255,255,255,.18); border-radius:2px; overflow:hidden;
+  }
+  .undo-toast-bar-fill{height:100%; width:100%; background:rgba(255,255,255,.75);}
+
   .badge-count{
     position:absolute; top:-4px; right:-4px; background:var(--danger); color:#fff;
     font-size:11px; font-weight:800; border-radius:20px; padding:2px 6px; min-width:18px; text-align:center;
@@ -494,6 +515,12 @@
 
 <div class="floaters" id="floaters"></div>
 <div class="toast" id="toast"></div>
+
+<div class="undo-toast" id="undoToast">
+  <span class="undo-toast-msg" id="undoToastMsg"></span>
+  <button class="undo-toast-btn" id="undoToastBtn">Undo</button>
+  <div class="undo-toast-bar-track"><div class="undo-toast-bar-fill" id="undoToastBarFill"></div></div>
+</div>
 
 <!-- PIN OVERLAY -->
 <div class="overlay" id="pinOverlay">

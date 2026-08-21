@@ -244,9 +244,10 @@ function requestPrize(prizeId, evt){
   render();
 }
 
-function approveEntry(id){
+function approveEntry(id, opts){
   const e = state.entries.find(x=>x.id===id);
   if(!e || e.status!=='pending') return;
+  if(!(opts && opts.silent)) snapshotForUndo(`Approved "${e.label}"`);
   e.status='approved';
 
   if(e.kind==='chore' || e.kind==='school' || e.kind==='bonus'){
@@ -278,19 +279,64 @@ function bulkApproveAll(){
   const ids = pendingEntries().map(e=>e.id);
   if(ids.length===0) return;
   const beforeLen = state.entries.length;
-  ids.forEach(id=>approveEntry(id));
+  ids.forEach(id=>approveEntry(id, {silent:true}));
   const bonusAdded = state.entries.length > beforeLen;
   toast(bonusAdded
     ? `Approved ${ids.length} item${ids.length>1?'s':''} — plus a new streak bonus to approve! 🏆`
     : `Approved ${ids.length} item${ids.length>1?'s':''} ✅`);
 }
 
-function denyEntry(id){
+function denyEntry(id, opts){
   const e = state.entries.find(x=>x.id===id);
   if(!e || e.status!=='pending') return;
+  if(!(opts && opts.silent)) snapshotForUndo(`Denied "${e.label}"`);
   e.status='denied';
   saveState();
   render();
+}
+
+/* ============ UNDO TOAST ============ */
+let lastActionSnapshot = null;
+let undoTimer = null;
+
+function snapshotForUndo(message){
+  lastActionSnapshot = {
+    points: state.points,
+    minutes: state.minutes,
+    entries: structuredClone(state.entries)
+  };
+  showUndoToast(message);
+}
+
+function showUndoToast(message){
+  clearTimeout(undoTimer);
+  document.getElementById('undoToastMsg').textContent = message;
+  document.getElementById('undoToast').classList.add('show');
+  const bar = document.getElementById('undoToastBarFill');
+  bar.style.transition = 'none';
+  bar.style.width = '100%';
+  void bar.offsetWidth;
+  bar.style.transition = 'width 6000ms linear';
+  bar.style.width = '0%';
+  undoTimer = setTimeout(hideUndoToast, 6000);
+}
+
+function hideUndoToast(){
+  clearTimeout(undoTimer);
+  undoTimer = null;
+  lastActionSnapshot = null;
+  document.getElementById('undoToast').classList.remove('show');
+}
+
+function performUndo(){
+  if(!lastActionSnapshot) return;
+  state.points = lastActionSnapshot.points;
+  state.minutes = lastActionSnapshot.minutes;
+  state.entries = lastActionSnapshot.entries;
+  hideUndoToast();
+  saveState();
+  render();
+  toast('Undone ↩️');
 }
 
 /* ============ PIN FLOW ============ */
@@ -1124,6 +1170,7 @@ document.getElementById('dayClose').addEventListener('click', closeDay);
 document.getElementById('dayOverlay').addEventListener('click', (e)=>{ if(e.target.id==='dayOverlay') closeDay(); });
 document.getElementById('iconClose').addEventListener('click', closeIconPicker);
 document.getElementById('iconOverlay').addEventListener('click', (e)=>{ if(e.target.id==='iconOverlay') closeIconPicker(); });
+document.getElementById('undoToastBtn').addEventListener('click', performUndo);
 
 buildPinPad();
 ensureWeek();
