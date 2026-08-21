@@ -274,6 +274,17 @@ function approveEntry(id){
   render();
 }
 
+function bulkApproveAll(){
+  const ids = pendingEntries().map(e=>e.id);
+  if(ids.length===0) return;
+  const beforeLen = state.entries.length;
+  ids.forEach(id=>approveEntry(id));
+  const bonusAdded = state.entries.length > beforeLen;
+  toast(bonusAdded
+    ? `Approved ${ids.length} item${ids.length>1?'s':''} — plus a new streak bonus to approve! 🏆`
+    : `Approved ${ids.length} item${ids.length>1?'s':''} ✅`);
+}
+
 function denyEntry(id){
   const e = state.entries.find(x=>x.id===id);
   if(!e || e.status!=='pending') return;
@@ -363,7 +374,12 @@ function parentApproveHTML(){
   if(pend.length===0){
     return `<div class="empty-state"><div class="e">✅</div>Nothing waiting on you right now.</div>`;
   }
-  return pend.map(e=>{
+  const header = `
+    <div class="approve-all-row">
+      <div class="approve-all-count">${pend.length} waiting</div>
+      <button class="btn-bulk-approve" id="bulkApproveBtn">Approve All</button>
+    </div>`;
+  return header + pend.map(e=>{
     const sign = e.kind==='redeem' ? '−' : '+';
     const cur = e.currency==='points' ? 'pts' : 'min';
     let extra = '';
@@ -622,6 +638,8 @@ function settingsDataHTML(){
 function wireParentBody(){
   document.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>approveEntry(b.dataset.approve));
   document.querySelectorAll('[data-deny]').forEach(b=>b.onclick=()=>denyEntry(b.dataset.deny));
+  const bulkApproveBtn = document.getElementById('bulkApproveBtn');
+  if(bulkApproveBtn) bulkApproveBtn.onclick=()=>bulkApproveAll();
 
   document.querySelectorAll('[data-chore-label]').forEach(inp=>{
     inp.onchange=()=>{
