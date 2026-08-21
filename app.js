@@ -69,6 +69,15 @@ function getMonday(d){
 function weekKeyFor(d){ return dateKey(getMonday(d)); }
 function addDays(d, n){ const nd = new Date(d); nd.setDate(nd.getDate()+n); return nd; }
 function daysInMonthCount(y, m){ return new Date(y, m+1, 0).getDate(); }
+
+function scheduleMidnightRefresh(){
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate()+1, 0, 0, 5);
+  setTimeout(()=>{
+    render();
+    scheduleMidnightRefresh();
+  }, next.getTime()-now.getTime());
+}
 function ensureWeek(){
   const wk = weekKeyFor(new Date());
   if(state.weekStart !== wk){
@@ -797,6 +806,7 @@ document.getElementById('dayOverlay').addEventListener('click', (e)=>{ if(e.targ
 buildPinPad();
 ensureWeek();
 render();
+scheduleMidnightRefresh();
 
 /* register service worker */
 if('serviceWorker' in navigator){
