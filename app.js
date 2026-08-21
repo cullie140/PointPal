@@ -3,6 +3,17 @@
 const STORAGE_KEY = 'pointpal_v1';
 const FISH_EMOJIS = ['🐠','🐟','🐡'];
 
+const ICON_SET = [
+  '⭐','✅','💪','❤️','🔥','✨','🎯','🏆',
+  '🍽️','🧹','🧺','🛏️','🚿','🪥','🧻','👕',
+  '🧴','🛁','🧼','🧽','🗑️','🪟','🚪','📦',
+  '🐶','🐾','🌱','🪴','🌳','🚗','🧦','⏰',
+  '📚','📝','🎒','🖍️','🧩','🎨','📖','✏️',
+  '🎁','🍪','🍦','🧸','🎡','🎮','🕹️','📱',
+  '🎬','🍿','🍕','🍔','🥤','🍬','🎈','🎉',
+  '⚽','🚲','🏊','🎢','🛍️','💰','🌟','🐠'
+];
+
 const DEFAULT_STATE = {
   childName: 'Champ',
   points: 0,
@@ -36,6 +47,9 @@ let activeParentTab = 'approve';
 let historyMode = 'week';     // 'week' | 'month'
 let historyWeekOffset = 0;    // 0 = this week, -1 = last week, ...
 let historyMonthOffset = 0;   // 0 = this month, -1 = last month, ...
+let pendingChoreIcon = '⭐';
+let pendingPrizeIcon = '🎁';
+let iconPickerContext = null; // {type:'newChore'|'newPrize'|'editChore'|'editPrize', id?}
 
 /* ---------- persistence ---------- */
 function loadState(){
@@ -301,7 +315,8 @@ function parentApproveHTML(){
 function parentChoresHTML(){
   const rows = state.chores.map(c=>`
     <div class="list-edit-item">
-      <span>${c.emoji} ${c.label}</span>
+      <button class="icon-swatch" data-edit-chore-icon="${c.id}">${c.emoji}</button>
+      <span>${c.label}</span>
       <label style="display:flex; align-items:center; gap:5px; font-weight:700; font-size:12px; color:var(--ink-soft); white-space:nowrap;">
         <input type="checkbox" data-chore-repeat="${c.id}" ${c.repeatable?'checked':''}> Repeatable
       </label>
@@ -310,10 +325,11 @@ function parentChoresHTML(){
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Points update live. Removing a chore doesn't erase past history.</div>
+    <div class="sheet-sub">Points update live. Tap an icon to change it. Removing a chore doesn't erase past history.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
-      <input id="newChoreLabel" class="child-name-input" placeholder="New chore name" style="flex:1 1 100%; margin-top:10px;">
+      <button class="icon-swatch" id="newChoreIconBtn" style="margin-top:10px;">${pendingChoreIcon}</button>
+      <input id="newChoreLabel" class="child-name-input" placeholder="New chore name" style="flex:1; margin-top:10px;">
       <input id="newChorePoints" class="settings-input" type="number" placeholder="pts" style="margin-top:8px;">
       <label style="display:flex; align-items:center; gap:6px; font-weight:700; font-size:13px; margin-top:8px;">
         <input type="checkbox" id="newChoreRepeat"> Repeatable
@@ -326,21 +342,59 @@ function parentChoresHTML(){
 function parentPrizesHTML(){
   const rows = state.prizes.map(p=>`
     <div class="list-edit-item">
-      <span>${p.emoji} ${p.label}${p.grantsMinutes?` <small style="color:var(--coral-deep); font-weight:800;">(+${p.grantsMinutes} min)</small>`:''}</span>
+      <button class="icon-swatch" data-edit-prize-icon="${p.id}">${p.emoji}</button>
+      <span>${p.label}${p.grantsMinutes?` <small style="color:var(--coral-deep); font-weight:800;">(+${p.grantsMinutes} min)</small>`:''}</span>
       <input class="settings-input" type="number" min="0" data-prize-cost="${p.id}" value="${p.cost}">
       <button class="icon-btn-sm" data-prize-del="${p.id}">Remove</button>
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Costs update live. Add "grants minutes" prizes for electronics-time purchases.</div>
+    <div class="sheet-sub">Costs update live. Tap an icon to change it. Add "grants minutes" prizes for electronics-time purchases.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
-      <input id="newPrizeLabel" class="child-name-input" placeholder="New prize name" style="flex:1 1 100%; margin-top:10px;">
+      <button class="icon-swatch" id="newPrizeIconBtn" style="margin-top:10px;">${pendingPrizeIcon}</button>
+      <input id="newPrizeLabel" class="child-name-input" placeholder="New prize name" style="flex:1; margin-top:10px;">
       <input id="newPrizeCost" class="settings-input" type="number" placeholder="cost" style="margin-top:8px;">
       <input id="newPrizeMinutes" class="settings-input" type="number" placeholder="min" style="margin-top:8px;" title="Minutes granted (optional)">
       <button class="btn btn-primary" id="addPrizeBtn" style="margin-top:8px;">Add Prize</button>
     </div>
   `;
+}
+
+function iconPickerHTML(){
+  return `<div class="icon-grid">${ICON_SET.map(ic=>`<button data-icon="${ic}">${ic}</button>`).join('')}</div>`;
+}
+function openIconPicker(ctx){
+  iconPickerContext = ctx;
+  document.getElementById('iconPickerBody').innerHTML = iconPickerHTML();
+  document.querySelectorAll('#iconPickerBody [data-icon]').forEach(b=>{
+    b.onclick=()=>pickIcon(b.dataset.icon);
+  });
+  document.getElementById('iconOverlay').classList.add('show');
+}
+function closeIconPicker(){
+  document.getElementById('iconOverlay').classList.remove('show');
+  iconPickerContext = null;
+}
+function pickIcon(emoji){
+  const ctx = iconPickerContext;
+  if(!ctx) return;
+  closeIconPicker();
+  if(ctx.type==='newChore'){
+    pendingChoreIcon = emoji;
+    const btn = document.getElementById('newChoreIconBtn');
+    if(btn) btn.textContent = emoji;
+  } else if(ctx.type==='newPrize'){
+    pendingPrizeIcon = emoji;
+    const btn = document.getElementById('newPrizeIconBtn');
+    if(btn) btn.textContent = emoji;
+  } else if(ctx.type==='editChore'){
+    const c = state.chores.find(x=>x.id===ctx.id);
+    if(c){ c.emoji = emoji; saveState(); render(); }
+  } else if(ctx.type==='editPrize'){
+    const p = state.prizes.find(x=>x.id===ctx.id);
+    if(p){ p.emoji = emoji; saveState(); render(); }
+  }
 }
 
 function parentSettingsHTML(){
@@ -399,13 +453,19 @@ function wireParentBody(){
       saveState(); renderParentBody(); render();
     };
   });
+  document.querySelectorAll('[data-edit-chore-icon]').forEach(b=>{
+    b.onclick=()=>openIconPicker({type:'editChore', id:b.dataset.editChoreIcon});
+  });
+  const newChoreIconBtn = document.getElementById('newChoreIconBtn');
+  if(newChoreIconBtn) newChoreIconBtn.onclick=()=>openIconPicker({type:'newChore'});
   const addChoreBtn = document.getElementById('addChoreBtn');
   if(addChoreBtn) addChoreBtn.onclick=()=>{
     const label = document.getElementById('newChoreLabel').value.trim();
     const pts = parseInt(document.getElementById('newChorePoints').value)||0;
     const rep = document.getElementById('newChoreRepeat').checked;
     if(!label) return;
-    state.chores.push({id:uid(), label, emoji:'⭐', points:pts, repeatable:rep});
+    state.chores.push({id:uid(), label, emoji:pendingChoreIcon, points:pts, repeatable:rep});
+    pendingChoreIcon = '⭐';
     saveState(); renderParentBody(); render();
   };
 
@@ -421,13 +481,19 @@ function wireParentBody(){
       saveState(); renderParentBody(); render();
     };
   });
+  document.querySelectorAll('[data-edit-prize-icon]').forEach(b=>{
+    b.onclick=()=>openIconPicker({type:'editPrize', id:b.dataset.editPrizeIcon});
+  });
+  const newPrizeIconBtn = document.getElementById('newPrizeIconBtn');
+  if(newPrizeIconBtn) newPrizeIconBtn.onclick=()=>openIconPicker({type:'newPrize'});
   const addPrizeBtn = document.getElementById('addPrizeBtn');
   if(addPrizeBtn) addPrizeBtn.onclick=()=>{
     const label = document.getElementById('newPrizeLabel').value.trim();
     const cost = parseInt(document.getElementById('newPrizeCost').value)||0;
     const mins = parseInt(document.getElementById('newPrizeMinutes').value)||0;
     if(!label) return;
-    state.prizes.push({id:uid(), label, emoji:'🎁', cost, grantsMinutes:mins||undefined});
+    state.prizes.push({id:uid(), label, emoji:pendingPrizeIcon, cost, grantsMinutes:mins||undefined});
+    pendingPrizeIcon = '🎁';
     saveState(); renderParentBody(); render();
   };
 
@@ -803,6 +869,8 @@ document.getElementById('pinOverlay').addEventListener('click', (e)=>{ if(e.targ
 document.getElementById('parentOverlay').addEventListener('click', (e)=>{ if(e.target.id==='parentOverlay') closeParent(); });
 document.getElementById('dayClose').addEventListener('click', closeDay);
 document.getElementById('dayOverlay').addEventListener('click', (e)=>{ if(e.target.id==='dayOverlay') closeDay(); });
+document.getElementById('iconClose').addEventListener('click', closeIconPicker);
+document.getElementById('iconOverlay').addEventListener('click', (e)=>{ if(e.target.id==='iconOverlay') closeIconPicker(); });
 
 buildPinPad();
 ensureWeek();

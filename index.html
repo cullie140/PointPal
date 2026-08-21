@@ -389,6 +389,21 @@
   .list-edit-item{display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #EEF3F4;}
   .list-edit-item span{flex:1; font-weight:700; font-size:14px;}
 
+  .icon-swatch{
+    width:44px; height:44px; flex-shrink:0; border-radius:12px; border:none;
+    background:var(--bg); font-size:22px; display:flex; align-items:center; justify-content:center;
+  }
+  .icon-swatch:active{transform:scale(.92);}
+  .icon-grid{
+    display:grid; grid-template-columns:repeat(6, 1fr); gap:8px; margin:6px 0 4px;
+    max-height:50vh; overflow-y:auto;
+  }
+  .icon-grid button{
+    aspect-ratio:1; border-radius:12px; border:2px solid transparent; background:var(--bg);
+    font-size:22px; display:flex; align-items:center; justify-content:center;
+  }
+  .icon-grid button:active{transform:scale(.92); border-color:var(--teal-light);}
+
   /* ---------- TABLET (portrait ~800px, landscape ~1280px on a 10.1in 1280x800 device) ---------- */
   @media (min-width:700px){
     #app, .navbar, .sheet{ max-width:700px; }
@@ -475,6 +490,16 @@
     <div class="sheet-title" id="dayTitle">Day</div>
     <div id="dayBody"></div>
     <button class="btn btn-ghost" id="dayClose">Close</button>
+  </div>
+</div>
+
+<!-- ICON PICKER OVERLAY -->
+<div class="overlay" id="iconOverlay">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Pick an Icon</div>
+    <div id="iconPickerBody"></div>
+    <button class="btn btn-ghost" id="iconClose">Close</button>
   </div>
 </div>
 
