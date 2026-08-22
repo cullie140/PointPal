@@ -503,17 +503,68 @@ async function performUndo(){
 }
 
 /* ============ PIN FLOW ============ */
+const PIN_LOCK_KEY = 'pointpal_pin_lock';
+const PIN_MAX_FAILS = 5;
+const PIN_LOCK_MS = 30000;
+let pinLockTimer = null;
+
+function getPinLockState(){
+  try{
+    const raw = localStorage.getItem(PIN_LOCK_KEY);
+    return raw ? JSON.parse(raw) : {fails:0, lockUntil:null};
+  }catch(e){ return {fails:0, lockUntil:null}; }
+}
+function savePinLockState(s){
+  try{ localStorage.setItem(PIN_LOCK_KEY, JSON.stringify(s)); }catch(e){}
+}
+
 function openPin(ctx){
   pinContext = ctx;
   pinBuffer='';
-  renderPinDots();
   document.getElementById('pinOverlay').classList.add('show');
+  updatePinLockUI();
 }
 function closePin(){
   document.getElementById('pinOverlay').classList.remove('show');
   pinBuffer='';
+  clearInterval(pinLockTimer);
 }
+
+function updatePinLockUI(){
+  const lock = getPinLockState();
+  const pad = document.getElementById('pinPad');
+  const title = document.getElementById('pinTitle');
+  const sub = document.getElementById('pinSub');
+  clearInterval(pinLockTimer);
+  if(lock.lockUntil && lock.lockUntil > Date.now()){
+    pad.style.display = 'none';
+    title.textContent = 'Locked';
+    renderPinDots();
+    const tick = ()=>{
+      const remaining = Math.max(0, Math.ceil((lock.lockUntil - Date.now())/1000));
+      sub.textContent = `Too many wrong tries. Try again in ${remaining}s`;
+      if(remaining<=0){
+        clearInterval(pinLockTimer);
+        savePinLockState({fails:0, lockUntil:null});
+        pad.style.display = 'grid';
+        title.textContent = 'Parent PIN';
+        sub.textContent = 'Enter the 4-digit code';
+        renderPinDots();
+      }
+    };
+    tick();
+    pinLockTimer = setInterval(tick, 1000);
+  } else {
+    pad.style.display = 'grid';
+    title.textContent = 'Parent PIN';
+    sub.textContent = 'Enter the 4-digit code';
+    renderPinDots();
+  }
+}
+
 function pressPinKey(k){
+  const lock = getPinLockState();
+  if(lock.lockUntil && lock.lockUntil > Date.now()) return;
   if(k==='del'){ pinBuffer = pinBuffer.slice(0,-1); renderPinDots(); return; }
   if(pinBuffer.length>=4) return;
   pinBuffer += k;
@@ -521,15 +572,24 @@ function pressPinKey(k){
   if(pinBuffer.length===4){
     setTimeout(()=>{
       if(pinBuffer===state.pin){
+        savePinLockState({fails:0, lockUntil:null});
         closePin();
         if(pinContext==='unlock'){ openParent(); }
       } else {
-        const dots = document.getElementById('pinDots');
-        dots.style.animation='none';
-        void dots.offsetWidth;
-        dots.style.animation='shake 400ms ease';
-        pinBuffer='';
-        renderPinDots();
+        const newFails = lock.fails + 1;
+        if(newFails >= PIN_MAX_FAILS){
+          savePinLockState({fails:0, lockUntil: Date.now()+PIN_LOCK_MS});
+          pinBuffer='';
+          updatePinLockUI();
+        } else {
+          savePinLockState({fails:newFails, lockUntil:null});
+          const dots = document.getElementById('pinDots');
+          dots.style.animation='none';
+          void dots.offsetWidth;
+          dots.style.animation='shake 400ms ease';
+          pinBuffer='';
+          renderPinDots();
+        }
       }
     }, 120);
   }
@@ -558,6 +618,30 @@ function buildPinPad(){
 }
 
 /* ============ PARENT ZONE ============ */
+const PARENT_IDLE_MS = 120000; // auto-lock Parent Zone after 2 idle minutes
+let parentLastActivity = 0;
+let parentIdleChecker = null;
+function resetParentIdleTimer(){ parentLastActivity = Date.now(); }
+function startParentIdleWatch(){
+  resetParentIdleTimer();
+  document.addEventListener('click', resetParentIdleTimer);
+  document.addEventListener('input', resetParentIdleTimer);
+  document.addEventListener('touchstart', resetParentIdleTimer);
+  clearInterval(parentIdleChecker);
+  parentIdleChecker = setInterval(()=>{
+    if(Date.now() - parentLastActivity > PARENT_IDLE_MS){
+      closeParent();
+      toast('Parent Zone locked (idle) 🔒');
+    }
+  }, 5000);
+}
+function stopParentIdleWatch(){
+  clearInterval(parentIdleChecker);
+  document.removeEventListener('click', resetParentIdleTimer);
+  document.removeEventListener('input', resetParentIdleTimer);
+  document.removeEventListener('touchstart', resetParentIdleTimer);
+}
+
 function openParent(){
   activeParentTab='approve';
   settingsTab='profile';
@@ -565,8 +649,10 @@ function openParent(){
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.ptab==='approve'));
   renderParentBody();
   document.getElementById('parentOverlay').classList.add('show');
+  startParentIdleWatch();
 }
 function closeParent(){
+  stopParentIdleWatch();
   document.getElementById('parentOverlay').classList.remove('show');
 }
 function renderParentBody(){
