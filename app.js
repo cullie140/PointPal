@@ -46,6 +46,16 @@ const DEFAULT_PRIZES = [
 ];
 
 function makeChild(id, name){
+  // DEFAULT_CHORES/PRIZES/CHALLENGES use fixed literal ids ('dishes', 'school', ...) as
+  // human-readable source data, but those ids are primary keys in Supabase — reusing them
+  // for every child would collide the moment a second child is inserted. Mint fresh ids here.
+  const chores = structuredClone(DEFAULT_CHORES);
+  const prizes = structuredClone(DEFAULT_PRIZES);
+  const challenges = structuredClone(DEFAULT_CHALLENGES);
+  const choreIdMap = {};
+  chores.forEach(c=>{ const newId = uid(); choreIdMap[c.id] = newId; c.id = newId; });
+  prizes.forEach(p=>{ p.id = uid(); });
+  challenges.forEach(ch=>{ ch.id = uid(); ch.choreId = choreIdMap[ch.choreId] || ch.choreId; });
   return {
     id, name,
     avatar: AVATAR_SET[0],
@@ -54,9 +64,9 @@ function makeChild(id, name){
     minutes: 0,
     weekStart: null,          // ISO date (Monday) this week's streak is counted against
     goalPrizeId: null,        // prize the child has pinned as their savings goal
-    chores: structuredClone(DEFAULT_CHORES),
-    prizes: structuredClone(DEFAULT_PRIZES),
-    challenges: structuredClone(DEFAULT_CHALLENGES),
+    chores,
+    prizes,
+    challenges,
     punishments: [],            // {id, label, blockPoints, blockMinutes, blockPrizes, endsAt}
     entries: []                // {id, ts, kind:'chore'|'bonus'|'redeem', refId, label, emoji, currency:'points'|'minutes', amount, status:'pending'|'approved'|'denied'}
   };
