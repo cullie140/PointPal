@@ -1,6 +1,5 @@
 /* ============ POINTPAL — app logic ============ */
 
-const STORAGE_KEY = 'pointpal_v1';
 const FISH_EMOJIS = ['🐠','🐟','🐡'];
 
 const ICON_SET = [
@@ -43,71 +42,134 @@ function makeChild(id, name){
   };
 }
 
-const DEFAULT_STATE = {
-  pin: '1234',
-  activeChildId: 'child-1',
-  children: [ makeChild('child-1', 'Champ') ]
-};
+/* ---------- Supabase ---------- */
+const SUPABASE_URL = 'https://anslyegjtjjfatlwpeqr.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_W_2KORxrYuoHgAf1VT_X-Q_rtVNz1kj';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-/* ---------- persistence ---------- */
-function migrateToMultiChild(parsed){
-  if(parsed.children) return parsed;
-  const legacyChild = {
-    id: 'child-1',
-    name: parsed.childName || 'Champ',
-    points: parsed.points || 0,
-    minutes: parsed.minutes || 0,
-    weekStart: parsed.weekStart || null,
-    chores: parsed.chores || structuredClone(DEFAULT_CHORES),
-    prizes: parsed.prizes || structuredClone(DEFAULT_PRIZES),
-    entries: parsed.entries || []
-  };
-  return {
-    pin: parsed.pin || '1234',
-    activeChildId: 'child-1',
-    children: [legacyChild]
-  };
-}
-function loadState(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return structuredClone(DEFAULT_STATE);
-    const parsed = migrateToMultiChild(JSON.parse(raw));
-    return Object.assign(structuredClone(DEFAULT_STATE), parsed);
-  }catch(e){
-    return structuredClone(DEFAULT_STATE);
-  }
-}
-function saveState(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
+const ACTIVE_CHILD_KEY = 'pointpal_active_child';
+let state = null;
+let child = null;
+let authUserId = null;
+let connectionOk = true;
 
-let state = loadState();
-function getActiveChild(){
-  return state.children.find(c=>c.id===state.activeChildId) || state.children[0];
-}
 function switchChild(id){
   const c = state.children.find(x=>x.id===id);
   if(!c) return;
   state.activeChildId = id;
   child = c;
-  saveState();
+  localStorage.setItem(ACTIVE_CHILD_KEY, id);
   render();
 }
 
-let child = getActiveChild();
-let view = 'home';
-let pinContext = null;   // 'unlock' -> opens parent overlay
-let pinBuffer = '';
-let activeParentTab = 'approve';
-let historyMode = 'week';     // 'week' | 'month'
-let historyWeekOffset = 0;    // 0 = this week, -1 = last week, ...
-let historyMonthOffset = 0;   // 0 = this month, -1 = last month, ...
-let pendingChoreIcon = '⭐';
-let pendingPrizeIcon = '🎁';
-let iconPickerContext = null; // {type:'newChore'|'newPrize'|'editChore'|'editPrize', id?}
-let settingsTab = 'profile'; // 'profile' | 'points' | 'manual' | 'data'
-let manualEntryType = null; // null | 'school' | 'chore' | 'prize'
+/* ---------- row <-> app shape converters ---------- */
+function toEntryRow(entry, childId){
+  return {
+    id: entry.id, child_id: childId, ts: entry.ts, kind: entry.kind, ref_id: entry.refId || null,
+    label: entry.label, emoji: entry.emoji, currency: entry.currency, amount: entry.amount,
+    status: entry.status, grants_minutes: entry.grantsMinutes || null
+  };
+}
+function rowsToChild(childRow, chores, prizes, entries){
+  return {
+    id: childRow.id,
+    name: childRow.name,
+    points: childRow.points,
+    minutes: childRow.minutes,
+    weekStart: childRow.week_start,
+    chores: chores.filter(c=>c.child_id===childRow.id).map(c=>({id:c.id, label:c.label, emoji:c.emoji, points:c.points, repeatable:c.repeatable})),
+    prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, grantsMinutes:p.grants_minutes||undefined})),
+    entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status, grantsMinutes:e.grants_minutes||undefined}))
+  };
+}
+async function insertChildFull(c){
+  await sb.from('children').insert({id:c.id, name:c.name, points:c.points, minutes:c.minutes, week_start:c.weekStart});
+  if(c.chores.length) await sb.from('chores').insert(c.chores.map(ch=>({id:ch.id, child_id:c.id, label:ch.label, emoji:ch.emoji, points:ch.points, repeatable:ch.repeatable})));
+  if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null})));
+}
+
+async function fetchCloudState(){
+  const [childrenRes, choresRes, prizesRes, entriesRes, settingsRes] = await Promise.all([
+    sb.from('children').select('*').order('created_at'),
+    sb.from('chores').select('*'),
+    sb.from('prizes').select('*'),
+    sb.from('entries').select('*'),
+    sb.from('family_settings').select('*').maybeSingle()
+  ]);
+  const firstError = childrenRes.error || choresRes.error || prizesRes.error || entriesRes.error || settingsRes.error;
+  if(firstError) throw firstError;
+
+  let childRows = childrenRes.data;
+  let choreRows = choresRes.data, prizeRows = prizesRes.data;
+  if(childRows.length===0){
+    const fresh = makeChild(uid(), 'Champ');
+    await insertChildFull(fresh);
+    childRows = [{id:fresh.id, name:fresh.name, points:0, minutes:0, week_start:null}];
+    choreRows = fresh.chores.map(c=>({...c, child_id:fresh.id}));
+    prizeRows = fresh.prizes.map(p=>({...p, child_id:fresh.id, grants_minutes:p.grantsMinutes||null}));
+  }
+
+  let pin = '1234';
+  if(settingsRes.data){ pin = settingsRes.data.pin; }
+  else { await sb.from('family_settings').insert({pin:'1234'}); }
+
+  const children = childRows.map(cr => rowsToChild(cr, choreRows, prizeRows, entriesRes.data));
+  return { pin, children };
+}
+
+function handleSyncError(error){
+  console.error('PointPal sync error', error);
+  connectionOk = false;
+  updateOfflineBanner();
+}
+
+/* ---------- realtime + connectivity ---------- */
+let realtimeChannel = null;
+let refetchTimer = null;
+
+function scheduleRefetch(){
+  clearTimeout(refetchTimer);
+  refetchTimer = setTimeout(async ()=>{
+    try{
+      const cloud = await fetchCloudState();
+      const activeId = child ? child.id : null;
+      state.pin = cloud.pin;
+      state.children = cloud.children;
+      child = state.children.find(c=>c.id===activeId) || state.children[0];
+      state.activeChildId = child.id;
+      connectionOk = true;
+      updateOfflineBanner();
+      render();
+    }catch(e){
+      handleSyncError(e);
+    }
+  }, 300);
+}
+
+function subscribeRealtime(){
+  if(realtimeChannel) sb.removeChannel(realtimeChannel);
+  const filter = `user_id=eq.${authUserId}`;
+  realtimeChannel = sb.channel('family-sync')
+    .on('postgres_changes', {event:'*', schema:'public', table:'children', filter}, scheduleRefetch)
+    .on('postgres_changes', {event:'*', schema:'public', table:'chores', filter}, scheduleRefetch)
+    .on('postgres_changes', {event:'*', schema:'public', table:'prizes', filter}, scheduleRefetch)
+    .on('postgres_changes', {event:'*', schema:'public', table:'entries', filter}, scheduleRefetch)
+    .subscribe((status)=>{
+      if(status==='SUBSCRIBED'){ connectionOk = true; updateOfflineBanner(); }
+      else if(status==='CHANNEL_ERROR' || status==='TIMED_OUT' || status==='CLOSED'){ connectionOk = false; updateOfflineBanner(); }
+    });
+}
+
+function updateOfflineBanner(){
+  const banner = document.getElementById('offlineBanner');
+  if(banner) banner.classList.toggle('show', !connectionOk);
+  const mc = document.getElementById('mainContent');
+  if(mc) mc.classList.toggle('offline-locked', !connectionOk);
+  const schoolBtn = document.getElementById('schoolBtn');
+  if(schoolBtn) schoolBtn.classList.toggle('offline-locked', !connectionOk);
+}
+window.addEventListener('online', ()=>{ connectionOk = true; updateOfflineBanner(); if(state) scheduleRefetch(); });
+window.addEventListener('offline', ()=>{ connectionOk = false; updateOfflineBanner(); });
 
 /* ---------- date helpers ---------- */
 function dateKey(d){
@@ -139,7 +201,7 @@ function ensureWeek(c){
   const wk = weekKeyFor(new Date());
   if(c.weekStart !== wk){
     c.weekStart = wk;
-    saveState();
+    sb.from('children').update({week_start: wk}).eq('id', c.id).then(({error})=>{ if(error) handleSyncError(error); });
   }
 }
 
@@ -179,36 +241,39 @@ function findEntryOwner(id){
 /* ---------- id gen ---------- */
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
+function requireOnline(){
+  if(!connectionOk){ toast('Offline — try again once reconnected'); return false; }
+  return true;
+}
+
 /* ============ ACTIONS ============ */
-function requestChore(choreId, evt){
+async function requestChore(choreId, evt){
+  if(!requireOnline()) return;
   const chore = child.chores.find(c=>c.id===choreId);
   if(!chore) return;
   if(!chore.repeatable){
     const already = entriesToday(child, 'chore', choreId).some(e=>e.status!=='denied');
     if(already){ toast(`${chore.label} is already done for today! 🎉`); return; }
   }
-  child.entries.push({
-    id:uid(), ts:Date.now(), kind:'chore', refId:choreId,
-    label:chore.label, emoji:chore.emoji, currency:'points', amount:chore.points, status:'pending'
-  });
-  saveState();
+  const entry = { id:uid(), ts:Date.now(), kind:'chore', refId:choreId, label:chore.label, emoji:chore.emoji, currency:'points', amount:chore.points, status:'pending' };
+  child.entries.push(entry);
   spawnFloaterAt(evt, `+${chore.points} pts (pending)`, 'var(--gold-deep)');
   toast(`Sent "${chore.label}" for approval ⏳`);
   render();
+  try{ await sb.from('entries').insert(toEntryRow(entry, child.id)); }catch(err){ handleSyncError(err); }
 }
 
-function requestSchoolDay(evt){
+async function requestSchoolDay(evt){
+  if(!requireOnline()) return;
   ensureWeek(child);
   const already = entriesToday(child, 'school').some(e=>e.status!=='denied');
   if(already){ toast('Already marked for today! 🌟'); return; }
-  child.entries.push({
-    id:uid(), ts:Date.now(), kind:'school', refId:'school',
-    label:'Good Day at School', emoji:'🎒', currency:'minutes', amount:15, status:'pending'
-  });
-  saveState();
+  const entry = { id:uid(), ts:Date.now(), kind:'school', refId:'school', label:'Good Day at School', emoji:'🎒', currency:'minutes', amount:15, status:'pending' };
+  child.entries.push(entry);
   spawnFloaterAt(evt, `+15 min (pending)`, 'var(--gold-deep)');
   toast('Sent for approval ⏳');
   render();
+  try{ await sb.from('entries').insert(toEntryRow(entry, child.id)); }catch(err){ handleSyncError(err); }
 }
 
 function pastDateOrToast(dateStr){
@@ -218,36 +283,41 @@ function pastDateOrToast(dateStr){
   return d;
 }
 
-function addPastSchoolDay(dateStr){
+async function addPastSchoolDay(dateStr){
+  if(!requireOnline()) return;
   const d = pastDateOrToast(dateStr);
   if(!d) return;
   const dk = dateKey(d);
   const already = entriesForDay(child, dk).some(e=>e.kind==='school' && e.status!=='denied');
   if(already){ toast('That day already has a school entry'); return; }
 
-  child.entries.push({
-    id:uid(), ts:d.getTime(), kind:'school', refId:'school',
-    label:'Good Day at School', emoji:'🎒', currency:'minutes', amount:15, status:'approved'
-  });
+  const schoolEntry = { id:uid(), ts:d.getTime(), kind:'school', refId:'school', label:'Good Day at School', emoji:'🎒', currency:'minutes', amount:15, status:'approved' };
+  child.entries.push(schoolEntry);
   child.minutes += 15;
 
   const wk = weekKeyFor(d);
   const goodDays = child.entries.filter(e=>e.kind==='school' && e.status==='approved' && weekKeyFor(new Date(e.ts))===wk).length;
   const bonusAlready = child.entries.some(e=>e.kind==='bonus' && weekKeyFor(new Date(e.ts))===wk);
+  let bonusEntry = null;
   if(goodDays>=5 && !bonusAlready){
-    child.entries.push({
-      id:uid(), ts:d.getTime(), kind:'bonus', refId:'bonus',
-      label:'5-Day Streak Bonus!', emoji:'🏆', currency:'minutes', amount:120, status:'approved'
-    });
+    bonusEntry = { id:uid(), ts:d.getTime(), kind:'bonus', refId:'bonus', label:'5-Day Streak Bonus!', emoji:'🏆', currency:'minutes', amount:120, status:'approved' };
+    child.entries.push(bonusEntry);
     child.minutes += 120;
     toast('5 good days that week — bonus added! 🏆');
   } else {
     toast('Added a Good Day at School ✅');
   }
-  saveState(); renderParentBody(); render();
+  renderParentBody(); render();
+
+  try{
+    await sb.from('entries').insert(toEntryRow(schoolEntry, child.id));
+    if(bonusEntry) await sb.from('entries').insert(toEntryRow(bonusEntry, child.id));
+    await sb.from('children').update({minutes: child.minutes}).eq('id', child.id);
+  }catch(err){ handleSyncError(err); }
 }
 
-function addPastChore(choreId, dateStr){
+async function addPastChore(choreId, dateStr){
+  if(!requireOnline()) return;
   const chore = child.chores.find(c=>c.id===choreId);
   if(!chore) return;
   const d = pastDateOrToast(dateStr);
@@ -257,53 +327,64 @@ function addPastChore(choreId, dateStr){
     const already = entriesForDay(child, dk).some(e=>e.kind==='chore' && e.refId===choreId && e.status!=='denied');
     if(already){ toast(`${chore.label} already has an entry that day`); return; }
   }
-  child.entries.push({
-    id:uid(), ts:d.getTime(), kind:'chore', refId:choreId,
-    label:chore.label, emoji:chore.emoji, currency:'points', amount:chore.points, status:'approved'
-  });
+  const entry = { id:uid(), ts:d.getTime(), kind:'chore', refId:choreId, label:chore.label, emoji:chore.emoji, currency:'points', amount:chore.points, status:'approved' };
+  child.entries.push(entry);
   child.points += chore.points;
   toast(`Added "${chore.label}" ✅`);
-  saveState(); renderParentBody(); render();
+  renderParentBody(); render();
+  try{
+    await sb.from('entries').insert(toEntryRow(entry, child.id));
+    await sb.from('children').update({points: child.points}).eq('id', child.id);
+  }catch(err){ handleSyncError(err); }
 }
 
-function addPastPrizeRedemption(prizeId, dateStr){
+async function addPastPrizeRedemption(prizeId, dateStr){
+  if(!requireOnline()) return;
   const prize = child.prizes.find(p=>p.id===prizeId);
   if(!prize) return;
   const d = pastDateOrToast(dateStr);
   if(!d) return;
-  child.entries.push({
+  const entry = {
     id:uid(), ts:d.getTime(), kind:'redeem', refId:prizeId,
     label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'approved',
     grantsMinutes: prize.grantsMinutes || 0
-  });
+  };
+  child.entries.push(entry);
   child.points = Math.max(0, child.points - prize.cost);
   if(prize.grantsMinutes) child.minutes += prize.grantsMinutes;
   toast(`Added "${prize.label}" redemption`);
-  saveState(); renderParentBody(); render();
+  renderParentBody(); render();
+  try{
+    await sb.from('entries').insert(toEntryRow(entry, child.id));
+    await sb.from('children').update({points: child.points, minutes: child.minutes}).eq('id', child.id);
+  }catch(err){ handleSyncError(err); }
 }
 
-function requestPrize(prizeId, evt){
+async function requestPrize(prizeId, evt){
+  if(!requireOnline()) return;
   const prize = child.prizes.find(p=>p.id===prizeId);
   if(!prize) return;
   const already = child.entries.some(e=>e.kind==='redeem' && e.refId===prizeId && e.status==='pending');
   if(already){ toast('Already waiting on approval for that one!'); return; }
-  child.entries.push({
+  const entry = {
     id:uid(), ts:Date.now(), kind:'redeem', refId:prizeId,
     label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'pending',
     grantsMinutes: prize.grantsMinutes || 0
-  });
-  saveState();
+  };
+  child.entries.push(entry);
   spawnFloaterAt(evt, `Requested!`, 'var(--coral-deep)');
   toast(`Asked to redeem "${prize.label}" 🙋`);
   render();
+  try{ await sb.from('entries').insert(toEntryRow(entry, child.id)); }catch(err){ handleSyncError(err); }
 }
 
-function approveEntry(id, opts){
+async function approveEntry(id, opts){
+  if(!connectionOk){ if(!(opts && opts.silent)) toast('Offline — try again once reconnected'); return; }
   const owner = findEntryOwner(id);
   if(!owner) return;
   const c = owner.child, e = owner.entry;
   if(e.status!=='pending') return;
-  if(!(opts && opts.silent)) snapshotForUndo(`Approved "${e.label}"`, c);
+  if(!(opts && opts.silent)) snapshotForUndo(`Approved "${e.label}"`, c, e, 'pending');
   e.status='approved';
 
   if(e.kind==='chore' || e.kind==='school' || e.kind==='bonus'){
@@ -316,26 +397,31 @@ function approveEntry(id, opts){
     burstConfetti();
   }
 
+  let newBonus = null;
   if(e.kind==='school'){
     ensureWeek(c);
     const goodDays = goodDaysThisWeekApproved(c);
     if(goodDays>=5 && !bonusAlreadyGrantedThisWeek(c)){
-      c.entries.push({
-        id:uid(), ts:Date.now(), kind:'bonus', refId:'bonus',
-        label:'5-Day Streak Bonus!', emoji:'🏆', currency:'minutes', amount:120, status:'pending'
-      });
+      newBonus = { id:uid(), ts:Date.now(), kind:'bonus', refId:'bonus', label:'5-Day Streak Bonus!', emoji:'🏆', currency:'minutes', amount:120, status:'pending' };
+      c.entries.push(newBonus);
+      if(lastActionSnapshot) lastActionSnapshot.extraEntryId = newBonus.id;
       toast('5 good days this week — bonus sent for approval! 🏆');
     }
   }
-  saveState();
   render();
+
+  try{
+    await sb.from('entries').update({status:'approved'}).eq('id', id);
+    await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id);
+    if(newBonus) await sb.from('entries').insert(toEntryRow(newBonus, c.id));
+  }catch(err){ handleSyncError(err); }
 }
 
-function bulkApproveAll(){
+async function bulkApproveAll(){
   const ids = pendingEntries().map(e=>e.id);
   if(ids.length===0) return;
   const beforeLen = state.children.reduce((sum,c)=>sum+c.entries.length, 0);
-  ids.forEach(id=>approveEntry(id, {silent:true}));
+  await Promise.all(ids.map(id=>approveEntry(id, {silent:true})));
   const afterLen = state.children.reduce((sum,c)=>sum+c.entries.length, 0);
   const bonusAdded = afterLen > beforeLen;
   toast(bonusAdded
@@ -343,27 +429,30 @@ function bulkApproveAll(){
     : `Approved ${ids.length} item${ids.length>1?'s':''} ✅`);
 }
 
-function denyEntry(id, opts){
+async function denyEntry(id, opts){
+  if(!connectionOk){ if(!(opts && opts.silent)) toast('Offline — try again once reconnected'); return; }
   const owner = findEntryOwner(id);
   if(!owner) return;
   const c = owner.child, e = owner.entry;
   if(e.status!=='pending') return;
-  if(!(opts && opts.silent)) snapshotForUndo(`Denied "${e.label}"`, c);
+  if(!(opts && opts.silent)) snapshotForUndo(`Denied "${e.label}"`, c, e, 'pending');
   e.status='denied';
-  saveState();
   render();
+  try{ await sb.from('entries').update({status:'denied'}).eq('id', id); }catch(err){ handleSyncError(err); }
 }
 
 /* ============ UNDO TOAST ============ */
 let lastActionSnapshot = null;
 let undoTimer = null;
 
-function snapshotForUndo(message, c){
+function snapshotForUndo(message, c, entry, prevStatus){
   lastActionSnapshot = {
     childId: c.id,
+    entryId: entry.id,
+    prevStatus,
     points: c.points,
     minutes: c.minutes,
-    entries: structuredClone(c.entries)
+    extraEntryId: null
   };
   showUndoToast(message);
 }
@@ -388,18 +477,29 @@ function hideUndoToast(){
   document.getElementById('undoToast').classList.remove('show');
 }
 
-function performUndo(){
+async function performUndo(){
   if(!lastActionSnapshot) return;
-  const c = state.children.find(x=>x.id===lastActionSnapshot.childId);
-  if(c){
-    c.points = lastActionSnapshot.points;
-    c.minutes = lastActionSnapshot.minutes;
-    c.entries = lastActionSnapshot.entries;
-  }
+  const snap = lastActionSnapshot;
+  const c = state.children.find(x=>x.id===snap.childId);
   hideUndoToast();
-  saveState();
+  if(!c) return;
+
+  const entry = c.entries.find(e=>e.id===snap.entryId);
+  if(entry) entry.status = snap.prevStatus;
+  if(snap.extraEntryId){
+    c.entries = c.entries.filter(e=>e.id!==snap.extraEntryId);
+  }
+  c.points = snap.points;
+  c.minutes = snap.minutes;
+
   render();
   toast('Undone ↩️');
+
+  try{
+    if(entry) await sb.from('entries').update({status: snap.prevStatus}).eq('id', snap.entryId);
+    if(snap.extraEntryId) await sb.from('entries').delete().eq('id', snap.extraEntryId);
+    await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id);
+  }catch(err){ handleSyncError(err); }
 }
 
 /* ============ PIN FLOW ============ */
@@ -579,7 +679,7 @@ function closeIconPicker(){
   document.getElementById('iconOverlay').classList.remove('show');
   iconPickerContext = null;
 }
-function pickIcon(emoji){
+async function pickIcon(emoji){
   const ctx = iconPickerContext;
   if(!ctx) return;
   closeIconPicker();
@@ -592,11 +692,13 @@ function pickIcon(emoji){
     const btn = document.getElementById('newPrizeIconBtn');
     if(btn) btn.textContent = emoji;
   } else if(ctx.type==='editChore'){
+    if(!requireOnline()) return;
     const c = child.chores.find(x=>x.id===ctx.id);
-    if(c){ c.emoji = emoji; saveState(); render(); }
+    if(c){ c.emoji = emoji; render(); try{ await sb.from('chores').update({emoji}).eq('id', c.id); }catch(err){ handleSyncError(err); } }
   } else if(ctx.type==='editPrize'){
+    if(!requireOnline()) return;
     const p = child.prizes.find(x=>x.id===ctx.id);
-    if(p){ p.emoji = emoji; saveState(); render(); }
+    if(p){ p.emoji = emoji; render(); try{ await sb.from('prizes').update({emoji}).eq('id', p.id); }catch(err){ handleSyncError(err); } }
   }
 }
 
@@ -763,29 +865,41 @@ function wireParentBody(){
   if(bulkApproveBtn) bulkApproveBtn.onclick=()=>bulkApproveAll();
 
   document.querySelectorAll('[data-chore-label]').forEach(inp=>{
-    inp.onchange=()=>{
+    inp.onchange=async ()=>{
       const c = child.chores.find(x=>x.id===inp.dataset.choreLabel);
       if(!c) return;
+      if(!requireOnline()){ inp.value = c.label; return; }
       const val = inp.value.trim();
-      if(val){ c.label = val; saveState(); render(); } else { inp.value = c.label; }
+      if(val){
+        c.label = val; render();
+        try{ await sb.from('chores').update({label:val}).eq('id', c.id); }catch(err){ handleSyncError(err); }
+      } else { inp.value = c.label; }
     };
   });
   document.querySelectorAll('[data-chore-points]').forEach(inp=>{
-    inp.onchange=()=>{
+    inp.onchange=async ()=>{
       const c = child.chores.find(x=>x.id===inp.dataset.chorePoints);
-      if(c){ c.points = parseInt(inp.value)||0; saveState(); }
+      if(!c || !requireOnline()) return;
+      c.points = parseInt(inp.value)||0;
+      try{ await sb.from('chores').update({points:c.points}).eq('id', c.id); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-chore-repeat]').forEach(inp=>{
-    inp.onchange=()=>{
+    inp.onchange=async ()=>{
       const c = child.chores.find(x=>x.id===inp.dataset.choreRepeat);
-      if(c){ c.repeatable = inp.checked; saveState(); render(); }
+      if(!c) return;
+      if(!requireOnline()){ inp.checked = !inp.checked; return; }
+      c.repeatable = inp.checked; render();
+      try{ await sb.from('chores').update({repeatable:c.repeatable}).eq('id', c.id); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-chore-del]').forEach(b=>{
-    b.onclick=()=>{
-      child.chores = child.chores.filter(c=>c.id!==b.dataset.choreDel);
-      saveState(); renderParentBody(); render();
+    b.onclick=async ()=>{
+      if(!requireOnline()) return;
+      const id = b.dataset.choreDel;
+      child.chores = child.chores.filter(c=>c.id!==id);
+      renderParentBody(); render();
+      try{ await sb.from('chores').delete().eq('id', id); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-edit-chore-icon]').forEach(b=>{
@@ -794,43 +908,55 @@ function wireParentBody(){
   const newChoreIconBtn = document.getElementById('newChoreIconBtn');
   if(newChoreIconBtn) newChoreIconBtn.onclick=()=>openIconPicker({type:'newChore'});
   const addChoreBtn = document.getElementById('addChoreBtn');
-  if(addChoreBtn) addChoreBtn.onclick=()=>{
+  if(addChoreBtn) addChoreBtn.onclick=async ()=>{
+    if(!requireOnline()) return;
     const label = document.getElementById('newChoreLabel').value.trim();
     const pts = parseInt(document.getElementById('newChorePoints').value)||0;
     const rep = document.getElementById('newChoreRepeat').checked;
     if(!label) return;
-    child.chores.push({id:uid(), label, emoji:pendingChoreIcon, points:pts, repeatable:rep});
+    const newChore = {id:uid(), label, emoji:pendingChoreIcon, points:pts, repeatable:rep};
+    child.chores.push(newChore);
     pendingChoreIcon = '⭐';
-    saveState(); renderParentBody(); render();
+    renderParentBody(); render();
+    try{ await sb.from('chores').insert({id:newChore.id, child_id:child.id, label:newChore.label, emoji:newChore.emoji, points:newChore.points, repeatable:newChore.repeatable}); }catch(err){ handleSyncError(err); }
   };
 
   document.querySelectorAll('[data-prize-label]').forEach(inp=>{
-    inp.onchange=()=>{
+    inp.onchange=async ()=>{
       const p = child.prizes.find(x=>x.id===inp.dataset.prizeLabel);
       if(!p) return;
+      if(!requireOnline()){ inp.value = p.label; return; }
       const val = inp.value.trim();
-      if(val){ p.label = val; saveState(); render(); } else { inp.value = p.label; }
+      if(val){
+        p.label = val; render();
+        try{ await sb.from('prizes').update({label:val}).eq('id', p.id); }catch(err){ handleSyncError(err); }
+      } else { inp.value = p.label; }
     };
   });
   document.querySelectorAll('[data-prize-minutes]').forEach(inp=>{
-    inp.onchange=()=>{
+    inp.onchange=async ()=>{
       const p = child.prizes.find(x=>x.id===inp.dataset.prizeMinutes);
-      if(!p) return;
+      if(!p || !requireOnline()) return;
       const mins = parseInt(inp.value);
       p.grantsMinutes = mins > 0 ? mins : undefined;
-      saveState();
+      try{ await sb.from('prizes').update({grants_minutes: mins > 0 ? mins : null}).eq('id', p.id); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-prize-cost]').forEach(inp=>{
-    inp.onchange=()=>{
+    inp.onchange=async ()=>{
       const p = child.prizes.find(x=>x.id===inp.dataset.prizeCost);
-      if(p){ p.cost = parseInt(inp.value)||0; saveState(); }
+      if(!p || !requireOnline()) return;
+      p.cost = parseInt(inp.value)||0;
+      try{ await sb.from('prizes').update({cost:p.cost}).eq('id', p.id); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-prize-del]').forEach(b=>{
-    b.onclick=()=>{
-      child.prizes = child.prizes.filter(p=>p.id!==b.dataset.prizeDel);
-      saveState(); renderParentBody(); render();
+    b.onclick=async ()=>{
+      if(!requireOnline()) return;
+      const id = b.dataset.prizeDel;
+      child.prizes = child.prizes.filter(p=>p.id!==id);
+      renderParentBody(); render();
+      try{ await sb.from('prizes').delete().eq('id', id); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-edit-prize-icon]').forEach(b=>{
@@ -839,21 +965,26 @@ function wireParentBody(){
   const newPrizeIconBtn = document.getElementById('newPrizeIconBtn');
   if(newPrizeIconBtn) newPrizeIconBtn.onclick=()=>openIconPicker({type:'newPrize'});
   const addPrizeBtn = document.getElementById('addPrizeBtn');
-  if(addPrizeBtn) addPrizeBtn.onclick=()=>{
+  if(addPrizeBtn) addPrizeBtn.onclick=async ()=>{
+    if(!requireOnline()) return;
     const label = document.getElementById('newPrizeLabel').value.trim();
     const cost = parseInt(document.getElementById('newPrizeCost').value)||0;
     const mins = parseInt(document.getElementById('newPrizeMinutes').value)||0;
     if(!label) return;
-    child.prizes.push({id:uid(), label, emoji:pendingPrizeIcon, cost, grantsMinutes:mins||undefined});
+    const newPrize = {id:uid(), label, emoji:pendingPrizeIcon, cost, grantsMinutes:mins||undefined};
+    child.prizes.push(newPrize);
     pendingPrizeIcon = '🎁';
-    saveState(); renderParentBody(); render();
+    renderParentBody(); render();
+    try{ await sb.from('prizes').insert({id:newPrize.id, child_id:child.id, label:newPrize.label, emoji:newPrize.emoji, cost:newPrize.cost, grants_minutes:newPrize.grantsMinutes||null}); }catch(err){ handleSyncError(err); }
   };
 
   document.querySelectorAll('[data-adjust]').forEach(b=>{
-    b.onclick=()=>{
+    b.onclick=async ()=>{
+      if(!requireOnline()) return;
       const [field, delta] = b.dataset.adjust.split(':');
       child[field] = Math.max(0, child[field] + parseInt(delta));
-      saveState(); renderParentBody(); render();
+      renderParentBody(); render();
+      try{ await sb.from('children').update({[field]: child[field]}).eq('id', child.id); }catch(err){ handleSyncError(err); }
     };
   });
 
@@ -880,15 +1011,20 @@ function wireParentBody(){
   };
 
   document.querySelectorAll('[data-child-name]').forEach(inp=>{
-    inp.onchange=()=>{
+    inp.onchange=async ()=>{
       const c = state.children.find(x=>x.id===inp.dataset.childName);
       if(!c) return;
+      if(!requireOnline()){ inp.value = c.name; return; }
       const val = inp.value.trim();
-      if(val){ c.name = val; saveState(); render(); } else { inp.value = c.name; }
+      if(val){
+        c.name = val; render();
+        try{ await sb.from('children').update({name:val}).eq('id', c.id); }catch(err){ handleSyncError(err); }
+      } else { inp.value = c.name; }
     };
   });
   document.querySelectorAll('[data-child-del]').forEach(b=>{
-    b.onclick=()=>{
+    b.onclick=async ()=>{
+      if(!requireOnline()) return;
       if(state.children.length<=1) return;
       const c = state.children.find(x=>x.id===b.dataset.childDel);
       if(!c) return;
@@ -897,42 +1033,57 @@ function wireParentBody(){
         if(state.activeChildId===c.id){
           state.activeChildId = state.children[0].id;
           child = state.children[0];
+          localStorage.setItem(ACTIVE_CHILD_KEY, child.id);
         }
-        saveState(); renderParentBody(); render();
+        renderParentBody(); render();
+        try{ await sb.from('children').delete().eq('id', c.id); }catch(err){ handleSyncError(err); }
       }
     };
   });
   const addChildBtn = document.getElementById('addChildBtn');
-  if(addChildBtn) addChildBtn.onclick=()=>{
+  if(addChildBtn) addChildBtn.onclick=async ()=>{
+    if(!requireOnline()) return;
     const name = document.getElementById('newChildName').value.trim();
     if(!name) return;
     const newChild = makeChild(uid(), name);
     state.children.push(newChild);
     state.activeChildId = newChild.id;
     child = newChild;
-    saveState(); renderParentBody(); render();
+    localStorage.setItem(ACTIVE_CHILD_KEY, child.id);
+    renderParentBody(); render();
+    try{ await insertChildFull(newChild); }catch(err){ handleSyncError(err); }
   };
 
   const saveBtn = document.getElementById('saveSettingsBtn');
-  if(saveBtn) saveBtn.onclick=()=>{
+  if(saveBtn) saveBtn.onclick=async ()=>{
+    if(!requireOnline()) return;
     const newPin = document.getElementById('newPinInput').value.trim();
     if(newPin.length===4 && /^\d{4}$/.test(newPin)){
       state.pin = newPin;
-      saveState();
       toast('PIN updated ✅');
+      try{ await sb.from('family_settings').update({pin:newPin}).eq('user_id', authUserId); }catch(err){ handleSyncError(err); }
     } else {
       toast('Enter a 4-digit PIN');
     }
   };
   const resetBtn = document.getElementById('resetAllBtn');
-  if(resetBtn) resetBtn.onclick=()=>{
+  if(resetBtn) resetBtn.onclick=async ()=>{
+    if(!requireOnline()) return;
     if(confirm(`This will erase all of ${child.name}'s points, minutes, and history. Are you sure?`)){
       const idx = state.children.findIndex(c=>c.id===child.id);
       const fresh = makeChild(child.id, child.name);
       state.children[idx] = fresh;
       child = fresh;
       ensureWeek(child);
-      saveState(); closeParent(); render();
+      closeParent(); render();
+      try{
+        await sb.from('entries').delete().eq('child_id', fresh.id);
+        await sb.from('chores').delete().eq('child_id', fresh.id);
+        await sb.from('prizes').delete().eq('child_id', fresh.id);
+        await sb.from('children').update({points:0, minutes:0, week_start: fresh.weekStart}).eq('id', fresh.id);
+        await sb.from('chores').insert(fresh.chores.map(c=>({id:c.id, child_id:fresh.id, label:c.label, emoji:c.emoji, points:c.points, repeatable:c.repeatable})));
+        await sb.from('prizes').insert(fresh.prizes.map(p=>({id:p.id, child_id:fresh.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null})));
+      }catch(err){ handleSyncError(err); }
     }
   };
 }
@@ -962,6 +1113,7 @@ function render(){
   else if(view==='prizes') el.innerHTML = prizesHTML();
   else el.innerHTML = historyHTML();
   wireMainContent();
+  updateOfflineBanner();
 
   if(document.getElementById('parentOverlay').classList.contains('show')){
     renderParentBody();
@@ -1279,6 +1431,58 @@ function timeAgo(ts){
   return new Date(ts).toLocaleDateString(undefined,{month:'short', day:'numeric'});
 }
 
+/* ============ BOOT / AUTH ============ */
+async function afterAuth(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('loadingScreen').style.display='flex';
+  document.getElementById('loadingSub').textContent = 'Syncing…';
+  try{
+    const { data: { user } } = await sb.auth.getUser();
+    authUserId = user.id;
+    const cloud = await fetchCloudState();
+    const savedActiveId = localStorage.getItem(ACTIVE_CHILD_KEY);
+    state = { pin: cloud.pin, activeChildId: savedActiveId, children: cloud.children };
+    if(!state.activeChildId || !state.children.find(c=>c.id===state.activeChildId)){
+      state.activeChildId = state.children[0].id;
+    }
+    child = state.children.find(c=>c.id===state.activeChildId);
+    localStorage.setItem(ACTIVE_CHILD_KEY, child.id);
+
+    document.getElementById('loadingScreen').style.display='none';
+    connectionOk = true;
+    buildPinPad();
+    ensureWeek(child);
+    render();
+    scheduleMidnightRefresh();
+    subscribeRealtime();
+  }catch(err){
+    console.error('boot error', err);
+    document.getElementById('loadingSub').textContent = 'Connection problem — retrying…';
+    setTimeout(afterAuth, 3000);
+  }
+}
+
+async function boot(){
+  const { data: { session } } = await sb.auth.getSession();
+  if(!session){
+    document.getElementById('loadingScreen').style.display='none';
+    document.getElementById('loginScreen').style.display='flex';
+    return;
+  }
+  await afterAuth();
+}
+
+document.getElementById('loginBtn').addEventListener('click', async ()=>{
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  if(!email || !password){ errEl.textContent = 'Enter email and password'; return; }
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){ errEl.textContent = error.message; return; }
+  await afterAuth();
+});
+
 /* ============ INIT / NAV WIRING ============ */
 document.querySelectorAll('.nav-btn').forEach(b=>{
   b.addEventListener('click', ()=>{ view=b.dataset.view; fishSpawned = fishSpawned; render(); });
@@ -1301,10 +1505,20 @@ document.getElementById('iconClose').addEventListener('click', closeIconPicker);
 document.getElementById('iconOverlay').addEventListener('click', (e)=>{ if(e.target.id==='iconOverlay') closeIconPicker(); });
 document.getElementById('undoToastBtn').addEventListener('click', performUndo);
 
-buildPinPad();
-ensureWeek(child);
-render();
-scheduleMidnightRefresh();
+let view = 'home';
+let pinContext = null;   // 'unlock' -> opens parent overlay
+let pinBuffer = '';
+let activeParentTab = 'approve';
+let historyMode = 'week';     // 'week' | 'month'
+let historyWeekOffset = 0;    // 0 = this week, -1 = last week, ...
+let historyMonthOffset = 0;   // 0 = this month, -1 = last month, ...
+let pendingChoreIcon = '⭐';
+let pendingPrizeIcon = '🎁';
+let iconPickerContext = null; // {type:'newChore'|'newPrize'|'editChore'|'editPrize', id?}
+let settingsTab = 'profile'; // 'profile' | 'points' | 'manual' | 'data'
+let manualEntryType = null; // null | 'school' | 'chore' | 'prize'
+
+boot();
 
 /* register service worker */
 if('serviceWorker' in navigator){
