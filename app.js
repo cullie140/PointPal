@@ -77,15 +77,15 @@ function rowsToChild(childRow, chores, prizes, entries){
     points: childRow.points,
     minutes: childRow.minutes,
     weekStart: childRow.week_start,
-    chores: chores.filter(c=>c.child_id===childRow.id).map(c=>({id:c.id, label:c.label, emoji:c.emoji, points:c.points, repeatable:c.repeatable})),
+    chores: chores.filter(c=>c.child_id===childRow.id).map(c=>({id:c.id, label:c.label, emoji:c.emoji, points:c.points, repeatable:c.repeatable, schedule:c.schedule||undefined})),
     prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, grantsMinutes:p.grants_minutes||undefined})),
     entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status, grantsMinutes:e.grants_minutes||undefined}))
   };
 }
 async function insertChildFull(c){
-  await sb.from('children').insert({id:c.id, name:c.name, points:c.points, minutes:c.minutes, week_start:c.weekStart});
-  if(c.chores.length) await sb.from('chores').insert(c.chores.map(ch=>({id:ch.id, child_id:c.id, label:ch.label, emoji:ch.emoji, points:ch.points, repeatable:ch.repeatable})));
-  if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null})));
+  await sb.from('children').insert({id:c.id, name:c.name, points:c.points, minutes:c.minutes, week_start:c.weekStart}).throwOnError();
+  if(c.chores.length) await sb.from('chores').insert(c.chores.map(ch=>({id:ch.id, child_id:c.id, label:ch.label, emoji:ch.emoji, points:ch.points, repeatable:ch.repeatable, schedule:ch.schedule||null}))).throwOnError();
+  if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null}))).throwOnError();
 }
 
 async function fetchCloudState(){
@@ -111,7 +111,7 @@ async function fetchCloudState(){
 
   let pin = '1234';
   if(settingsRes.data){ pin = settingsRes.data.pin; }
-  else { await sb.from('family_settings').insert({pin:'1234'}); }
+  else { await sb.from('family_settings').insert({pin:'1234'}).throwOnError(); }
 
   const children = childRows.map(cr => rowsToChild(cr, choreRows, prizeRows, entriesRes.data));
   return { pin, children };
@@ -189,6 +189,59 @@ function weekKeyFor(d){ return dateKey(getMonday(d)); }
 function addDays(d, n){ const nd = new Date(d); nd.setDate(nd.getDate()+n); return nd; }
 function daysInMonthCount(y, m){ return new Date(y, m+1, 0).getDate(); }
 
+const DOW_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const WEEK_ORDINAL = {1:'1st', 2:'2nd', 3:'3rd', 4:'4th', '-1':'Last'};
+
+function nthWeekdayOfMonthMatches(date, week){
+  if(week === -1){
+    const nextWeek = new Date(date);
+    nextWeek.setDate(date.getDate()+7);
+    return nextWeek.getMonth() !== date.getMonth();
+  }
+  return Math.ceil(date.getDate()/7) === week;
+}
+
+function matchesScheduleForDate(sched, date){
+  if(!sched || sched.type==='daily' || sched.type==='once') return true;
+  const dow = date.getDay();
+  if(sched.type==='weekly'){
+    return (sched.days||[]).includes(dow);
+  }
+  if(sched.type==='biweekly'){
+    if(dow !== sched.day) return false;
+    const anchor = new Date(sched.anchorMonday+'T00:00:00');
+    const thisMonday = getMonday(date);
+    const weeksDiff = Math.round((thisMonday - anchor) / (7*24*60*60*1000));
+    return weeksDiff % 2 === 0;
+  }
+  if(sched.type==='monthly'){
+    if(dow !== sched.day) return false;
+    return nthWeekdayOfMonthMatches(date, sched.week);
+  }
+  return true;
+}
+
+function isChoreVisibleToday(chore){
+  const sched = chore.schedule;
+  if(sched && sched.type==='once'){
+    const alreadyDone = child.entries.some(e=>e.kind==='chore' && e.refId===chore.id && e.status==='approved');
+    return !alreadyDone;
+  }
+  return matchesScheduleForDate(sched, new Date());
+}
+
+function scheduleSummaryText(sched){
+  if(!sched || sched.type==='daily') return 'Daily';
+  if(sched.type==='once') return 'One-time';
+  if(sched.type==='weekly'){
+    if(!sched.days || sched.days.length===0) return 'Certain days';
+    return sched.days.slice().sort().map(d=>DOW_ABBR[d]).join(', ');
+  }
+  if(sched.type==='biweekly') return `Every other ${DOW_ABBR[sched.day]}`;
+  if(sched.type==='monthly') return `${WEEK_ORDINAL[sched.week]} ${DOW_ABBR[sched.day]}`;
+  return 'Daily';
+}
+
 function scheduleMidnightRefresh(){
   const now = new Date();
   const next = new Date(now.getFullYear(), now.getMonth(), now.getDate()+1, 0, 0, 5);
@@ -251,7 +304,10 @@ async function requestChore(choreId, evt){
   if(!requireOnline()) return;
   const chore = child.chores.find(c=>c.id===choreId);
   if(!chore) return;
-  if(!chore.repeatable){
+  if(chore.schedule && chore.schedule.type==='once'){
+    const already = child.entries.some(e=>e.kind==='chore' && e.refId===choreId && e.status!=='denied');
+    if(already){ toast(`${chore.label} is already done! 🎉`); return; }
+  } else if(!chore.repeatable){
     const already = entriesToday(child, 'chore', choreId).some(e=>e.status!=='denied');
     if(already){ toast(`${chore.label} is already done for today! 🎉`); return; }
   }
@@ -260,7 +316,7 @@ async function requestChore(choreId, evt){
   spawnFloaterAt(evt, `+${chore.points} pts (pending)`, 'var(--gold-deep)');
   toast(`Sent "${chore.label}" for approval ⏳`);
   render();
-  try{ await sb.from('entries').insert(toEntryRow(entry, child.id)); }catch(err){ handleSyncError(err); }
+  try{ await sb.from('entries').insert(toEntryRow(entry, child.id)).throwOnError(); }catch(err){ handleSyncError(err); }
 }
 
 async function requestSchoolDay(evt){
@@ -273,7 +329,7 @@ async function requestSchoolDay(evt){
   spawnFloaterAt(evt, `+15 min (pending)`, 'var(--gold-deep)');
   toast('Sent for approval ⏳');
   render();
-  try{ await sb.from('entries').insert(toEntryRow(entry, child.id)); }catch(err){ handleSyncError(err); }
+  try{ await sb.from('entries').insert(toEntryRow(entry, child.id)).throwOnError(); }catch(err){ handleSyncError(err); }
 }
 
 function pastDateOrToast(dateStr){
@@ -310,9 +366,9 @@ async function addPastSchoolDay(dateStr){
   renderParentBody(); render();
 
   try{
-    await sb.from('entries').insert(toEntryRow(schoolEntry, child.id));
-    if(bonusEntry) await sb.from('entries').insert(toEntryRow(bonusEntry, child.id));
-    await sb.from('children').update({minutes: child.minutes}).eq('id', child.id);
+    await sb.from('entries').insert(toEntryRow(schoolEntry, child.id)).throwOnError();
+    if(bonusEntry) await sb.from('entries').insert(toEntryRow(bonusEntry, child.id)).throwOnError();
+    await sb.from('children').update({minutes: child.minutes}).eq('id', child.id).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
 
@@ -333,8 +389,8 @@ async function addPastChore(choreId, dateStr){
   toast(`Added "${chore.label}" ✅`);
   renderParentBody(); render();
   try{
-    await sb.from('entries').insert(toEntryRow(entry, child.id));
-    await sb.from('children').update({points: child.points}).eq('id', child.id);
+    await sb.from('entries').insert(toEntryRow(entry, child.id)).throwOnError();
+    await sb.from('children').update({points: child.points}).eq('id', child.id).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
 
@@ -355,8 +411,8 @@ async function addPastPrizeRedemption(prizeId, dateStr){
   toast(`Added "${prize.label}" redemption`);
   renderParentBody(); render();
   try{
-    await sb.from('entries').insert(toEntryRow(entry, child.id));
-    await sb.from('children').update({points: child.points, minutes: child.minutes}).eq('id', child.id);
+    await sb.from('entries').insert(toEntryRow(entry, child.id)).throwOnError();
+    await sb.from('children').update({points: child.points, minutes: child.minutes}).eq('id', child.id).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
 
@@ -375,7 +431,7 @@ async function requestPrize(prizeId, evt){
   spawnFloaterAt(evt, `Requested!`, 'var(--coral-deep)');
   toast(`Asked to redeem "${prize.label}" 🙋`);
   render();
-  try{ await sb.from('entries').insert(toEntryRow(entry, child.id)); }catch(err){ handleSyncError(err); }
+  try{ await sb.from('entries').insert(toEntryRow(entry, child.id)).throwOnError(); }catch(err){ handleSyncError(err); }
 }
 
 async function approveEntry(id, opts){
@@ -411,9 +467,9 @@ async function approveEntry(id, opts){
   render();
 
   try{
-    await sb.from('entries').update({status:'approved'}).eq('id', id);
-    await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id);
-    if(newBonus) await sb.from('entries').insert(toEntryRow(newBonus, c.id));
+    await sb.from('entries').update({status:'approved'}).eq('id', id).throwOnError();
+    await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id).throwOnError();
+    if(newBonus) await sb.from('entries').insert(toEntryRow(newBonus, c.id)).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
 
@@ -438,7 +494,7 @@ async function denyEntry(id, opts){
   if(!(opts && opts.silent)) snapshotForUndo(`Denied "${e.label}"`, c, e, 'pending');
   e.status='denied';
   render();
-  try{ await sb.from('entries').update({status:'denied'}).eq('id', id); }catch(err){ handleSyncError(err); }
+  try{ await sb.from('entries').update({status:'denied'}).eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
 }
 
 /* ============ UNDO TOAST ============ */
@@ -496,9 +552,9 @@ async function performUndo(){
   toast('Undone ↩️');
 
   try{
-    if(entry) await sb.from('entries').update({status: snap.prevStatus}).eq('id', snap.entryId);
-    if(snap.extraEntryId) await sb.from('entries').delete().eq('id', snap.extraEntryId);
-    await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id);
+    if(entry) await sb.from('entries').update({status: snap.prevStatus}).eq('id', snap.entryId).throwOnError();
+    if(snap.extraEntryId) await sb.from('entries').delete().eq('id', snap.extraEntryId).throwOnError();
+    await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
 
@@ -705,6 +761,7 @@ function parentChoresHTML(){
     <div class="list-edit-item">
       <button class="icon-swatch" data-edit-chore-icon="${c.id}">${c.emoji}</button>
       <input class="settings-input label-edit" data-chore-label="${c.id}" value="${c.label}">
+      <button class="schedule-pill" data-edit-chore-schedule="${c.id}">📅 ${scheduleSummaryText(c.schedule)}</button>
       <label style="display:flex; align-items:center; gap:5px; font-weight:700; font-size:12px; color:var(--ink-soft); white-space:nowrap;">
         <input type="checkbox" data-chore-repeat="${c.id}" ${c.repeatable?'checked':''}> Repeatable
       </label>
@@ -713,11 +770,12 @@ function parentChoresHTML(){
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Editing <b>${child.name}</b>'s chores. Names, points, and icons all update live. Removing a chore doesn't erase past history.</div>
+    <div class="sheet-sub">Editing <b>${child.name}</b>'s chores. Names, points, icons, and schedules all update live. Removing a chore doesn't erase past history.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
       <button class="icon-swatch" id="newChoreIconBtn" style="margin-top:10px;">${pendingChoreIcon}</button>
       <input id="newChoreLabel" class="child-name-input" placeholder="New chore name" style="flex:1; margin-top:10px;">
+      <button class="schedule-pill" id="newChoreScheduleBtn" style="margin-top:10px;">📅 ${scheduleSummaryText(pendingChoreSchedule)}</button>
       <input id="newChorePoints" class="settings-input" type="number" placeholder="pts" style="margin-top:8px;">
       <label style="display:flex; align-items:center; gap:6px; font-weight:700; font-size:13px; margin-top:8px;">
         <input type="checkbox" id="newChoreRepeat"> Repeatable
@@ -780,11 +838,114 @@ async function pickIcon(emoji){
   } else if(ctx.type==='editChore'){
     if(!requireOnline()) return;
     const c = child.chores.find(x=>x.id===ctx.id);
-    if(c){ c.emoji = emoji; render(); try{ await sb.from('chores').update({emoji}).eq('id', c.id); }catch(err){ handleSyncError(err); } }
+    if(c){ c.emoji = emoji; render(); try{ await sb.from('chores').update({emoji}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); } }
   } else if(ctx.type==='editPrize'){
     if(!requireOnline()) return;
     const p = child.prizes.find(x=>x.id===ctx.id);
-    if(p){ p.emoji = emoji; render(); try{ await sb.from('prizes').update({emoji}).eq('id', p.id); }catch(err){ handleSyncError(err); } }
+    if(p){ p.emoji = emoji; render(); try{ await sb.from('prizes').update({emoji}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); } }
+  }
+}
+
+function openSchedulePicker(ctx){
+  schedulePickerContext = ctx;
+  const current = ctx.type==='newChore' ? pendingChoreSchedule : (child.chores.find(c=>c.id===ctx.id)||{}).schedule;
+  scheduleDraft = structuredClone(current || {type:'daily'});
+  document.getElementById('schedulePickerBody').innerHTML = scheduleEditorHTML();
+  wireScheduleEditor();
+  document.getElementById('scheduleOverlay').classList.add('show');
+}
+function closeSchedulePicker(){
+  document.getElementById('scheduleOverlay').classList.remove('show');
+  schedulePickerContext = null;
+}
+
+function scheduleEditorHTML(){
+  const types = [
+    {key:'daily', label:'Daily'},
+    {key:'weekly', label:'Certain Days'},
+    {key:'biweekly', label:'Every Other Week'},
+    {key:'monthly', label:'Monthly'},
+    {key:'once', label:'One-Time'}
+  ];
+  const typeRow = `<div class="sched-type-row">${types.map(t=>`<button class="sched-type-btn ${scheduleDraft.type===t.key?'active':''}" data-sched-type="${t.key}">${t.label}</button>`).join('')}</div>`;
+
+  let sub = '';
+  if(scheduleDraft.type==='weekly'){
+    const days = scheduleDraft.days || [];
+    sub = `
+      <div class="sched-sub-label">Which days?</div>
+      <div class="sched-day-row">${DOW_ABBR.map((d,i)=>`<button class="sched-day-btn ${days.includes(i)?'active':''}" data-sched-day="${i}">${d[0]}</button>`).join('')}</div>
+    `;
+  } else if(scheduleDraft.type==='biweekly'){
+    const day = scheduleDraft.day ?? new Date().getDay();
+    sub = `
+      <div class="sched-sub-label">Which day?</div>
+      <select id="schedBiweeklyDay" class="child-name-input">${DOW_ABBR.map((d,i)=>`<option value="${i}" ${day===i?'selected':''}>${d}</option>`).join('')}</select>
+      <div class="sheet-sub" style="margin-top:8px;">Alternates every other week starting this week.</div>
+    `;
+  } else if(scheduleDraft.type==='monthly'){
+    const week = scheduleDraft.week ?? 1;
+    const day = scheduleDraft.day ?? new Date().getDay();
+    sub = `
+      <div class="sched-sub-label">Which week?</div>
+      <select id="schedMonthlyWeek" class="child-name-input">${[1,2,3,4,-1].map(w=>`<option value="${w}" ${week===w?'selected':''}>${WEEK_ORDINAL[w]}</option>`).join('')}</select>
+      <div class="sched-sub-label">Which day?</div>
+      <select id="schedMonthlyDay" class="child-name-input">${DOW_ABBR.map((d,i)=>`<option value="${i}" ${day===i?'selected':''}>${d}</option>`).join('')}</select>
+    `;
+  } else if(scheduleDraft.type==='once'){
+    sub = `<div class="sheet-sub" style="margin-top:8px;">Shows up until it's approved once, then disappears for good unless added again.</div>`;
+  } else {
+    sub = `<div class="sheet-sub" style="margin-top:8px;">Shows up every day.</div>`;
+  }
+
+  return typeRow + sub;
+}
+
+function wireScheduleEditor(){
+  document.querySelectorAll('[data-sched-type]').forEach(b=>{
+    b.onclick=()=>{
+      const type = b.dataset.schedType;
+      if(type==='weekly') scheduleDraft = {type, days: scheduleDraft.days || [new Date().getDay()]};
+      else if(type==='biweekly') scheduleDraft = {type, day: scheduleDraft.day ?? new Date().getDay(), anchorMonday: dateKey(getMonday(new Date()))};
+      else if(type==='monthly') scheduleDraft = {type, week: scheduleDraft.week ?? 1, day: scheduleDraft.day ?? new Date().getDay()};
+      else scheduleDraft = {type};
+      document.getElementById('schedulePickerBody').innerHTML = scheduleEditorHTML();
+      wireScheduleEditor();
+    };
+  });
+  document.querySelectorAll('[data-sched-day]').forEach(b=>{
+    b.onclick=()=>{
+      const day = parseInt(b.dataset.schedDay);
+      const days = new Set(scheduleDraft.days||[]);
+      if(days.has(day)) days.delete(day); else days.add(day);
+      scheduleDraft.days = [...days];
+      b.classList.toggle('active');
+    };
+  });
+  const biweeklyDay = document.getElementById('schedBiweeklyDay');
+  if(biweeklyDay) biweeklyDay.onchange=()=>{ scheduleDraft.day = parseInt(biweeklyDay.value); };
+  const monthlyWeek = document.getElementById('schedMonthlyWeek');
+  if(monthlyWeek) monthlyWeek.onchange=()=>{ scheduleDraft.week = parseInt(monthlyWeek.value); };
+  const monthlyDay = document.getElementById('schedMonthlyDay');
+  if(monthlyDay) monthlyDay.onchange=()=>{ scheduleDraft.day = parseInt(monthlyDay.value); };
+}
+
+async function saveSchedule(){
+  const ctx = schedulePickerContext;
+  if(!ctx) return;
+  const sched = structuredClone(scheduleDraft);
+  closeSchedulePicker();
+  if(ctx.type==='newChore'){
+    pendingChoreSchedule = sched;
+    const btn = document.getElementById('newChoreScheduleBtn');
+    if(btn) btn.textContent = `📅 ${scheduleSummaryText(sched)}`;
+  } else if(ctx.type==='editChore'){
+    if(!requireOnline()) return;
+    const c = child.chores.find(x=>x.id===ctx.id);
+    if(c){
+      c.schedule = sched; render();
+      try{ await sb.from('chores').update({schedule: sched}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
+    }
   }
 }
 
@@ -958,7 +1119,7 @@ function wireParentBody(){
       const val = inp.value.trim();
       if(val){
         c.label = val; render();
-        try{ await sb.from('chores').update({label:val}).eq('id', c.id); }catch(err){ handleSyncError(err); }
+        try{ await sb.from('chores').update({label:val}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
       } else { inp.value = c.label; }
     };
   });
@@ -967,7 +1128,7 @@ function wireParentBody(){
       const c = child.chores.find(x=>x.id===inp.dataset.chorePoints);
       if(!c || !requireOnline()) return;
       c.points = parseInt(inp.value)||0;
-      try{ await sb.from('chores').update({points:c.points}).eq('id', c.id); }catch(err){ handleSyncError(err); }
+      try{ await sb.from('chores').update({points:c.points}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-chore-repeat]').forEach(inp=>{
@@ -976,7 +1137,7 @@ function wireParentBody(){
       if(!c) return;
       if(!requireOnline()){ inp.checked = !inp.checked; return; }
       c.repeatable = inp.checked; render();
-      try{ await sb.from('chores').update({repeatable:c.repeatable}).eq('id', c.id); }catch(err){ handleSyncError(err); }
+      try{ await sb.from('chores').update({repeatable:c.repeatable}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-chore-del]').forEach(b=>{
@@ -985,7 +1146,7 @@ function wireParentBody(){
       const id = b.dataset.choreDel;
       child.chores = child.chores.filter(c=>c.id!==id);
       renderParentBody(); render();
-      try{ await sb.from('chores').delete().eq('id', id); }catch(err){ handleSyncError(err); }
+      try{ await sb.from('chores').delete().eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-edit-chore-icon]').forEach(b=>{
@@ -993,6 +1154,11 @@ function wireParentBody(){
   });
   const newChoreIconBtn = document.getElementById('newChoreIconBtn');
   if(newChoreIconBtn) newChoreIconBtn.onclick=()=>openIconPicker({type:'newChore'});
+  document.querySelectorAll('[data-edit-chore-schedule]').forEach(b=>{
+    b.onclick=()=>openSchedulePicker({type:'editChore', id:b.dataset.editChoreSchedule});
+  });
+  const newChoreScheduleBtn = document.getElementById('newChoreScheduleBtn');
+  if(newChoreScheduleBtn) newChoreScheduleBtn.onclick=()=>openSchedulePicker({type:'newChore'});
   const addChoreBtn = document.getElementById('addChoreBtn');
   if(addChoreBtn) addChoreBtn.onclick=async ()=>{
     if(!requireOnline()) return;
@@ -1000,11 +1166,12 @@ function wireParentBody(){
     const pts = parseInt(document.getElementById('newChorePoints').value)||0;
     const rep = document.getElementById('newChoreRepeat').checked;
     if(!label) return;
-    const newChore = {id:uid(), label, emoji:pendingChoreIcon, points:pts, repeatable:rep};
+    const newChore = {id:uid(), label, emoji:pendingChoreIcon, points:pts, repeatable:rep, schedule:pendingChoreSchedule};
     child.chores.push(newChore);
     pendingChoreIcon = '⭐';
+    pendingChoreSchedule = {type:'daily'};
     renderParentBody(); render();
-    try{ await sb.from('chores').insert({id:newChore.id, child_id:child.id, label:newChore.label, emoji:newChore.emoji, points:newChore.points, repeatable:newChore.repeatable}); }catch(err){ handleSyncError(err); }
+    try{ await sb.from('chores').insert({id:newChore.id, child_id:child.id, label:newChore.label, emoji:newChore.emoji, points:newChore.points, repeatable:newChore.repeatable, schedule:newChore.schedule}).throwOnError(); }catch(err){ handleSyncError(err); }
   };
 
   document.querySelectorAll('[data-prize-label]').forEach(inp=>{
@@ -1015,7 +1182,7 @@ function wireParentBody(){
       const val = inp.value.trim();
       if(val){
         p.label = val; render();
-        try{ await sb.from('prizes').update({label:val}).eq('id', p.id); }catch(err){ handleSyncError(err); }
+        try{ await sb.from('prizes').update({label:val}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
       } else { inp.value = p.label; }
     };
   });
@@ -1025,7 +1192,7 @@ function wireParentBody(){
       if(!p || !requireOnline()) return;
       const mins = parseInt(inp.value);
       p.grantsMinutes = mins > 0 ? mins : undefined;
-      try{ await sb.from('prizes').update({grants_minutes: mins > 0 ? mins : null}).eq('id', p.id); }catch(err){ handleSyncError(err); }
+      try{ await sb.from('prizes').update({grants_minutes: mins > 0 ? mins : null}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-prize-cost]').forEach(inp=>{
@@ -1033,7 +1200,7 @@ function wireParentBody(){
       const p = child.prizes.find(x=>x.id===inp.dataset.prizeCost);
       if(!p || !requireOnline()) return;
       p.cost = parseInt(inp.value)||0;
-      try{ await sb.from('prizes').update({cost:p.cost}).eq('id', p.id); }catch(err){ handleSyncError(err); }
+      try{ await sb.from('prizes').update({cost:p.cost}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-prize-del]').forEach(b=>{
@@ -1042,7 +1209,7 @@ function wireParentBody(){
       const id = b.dataset.prizeDel;
       child.prizes = child.prizes.filter(p=>p.id!==id);
       renderParentBody(); render();
-      try{ await sb.from('prizes').delete().eq('id', id); }catch(err){ handleSyncError(err); }
+      try{ await sb.from('prizes').delete().eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-edit-prize-icon]').forEach(b=>{
@@ -1061,7 +1228,7 @@ function wireParentBody(){
     child.prizes.push(newPrize);
     pendingPrizeIcon = '🎁';
     renderParentBody(); render();
-    try{ await sb.from('prizes').insert({id:newPrize.id, child_id:child.id, label:newPrize.label, emoji:newPrize.emoji, cost:newPrize.cost, grants_minutes:newPrize.grantsMinutes||null}); }catch(err){ handleSyncError(err); }
+    try{ await sb.from('prizes').insert({id:newPrize.id, child_id:child.id, label:newPrize.label, emoji:newPrize.emoji, cost:newPrize.cost, grants_minutes:newPrize.grantsMinutes||null}).throwOnError(); }catch(err){ handleSyncError(err); }
   };
 
   document.querySelectorAll('[data-adjust]').forEach(b=>{
@@ -1070,7 +1237,7 @@ function wireParentBody(){
       const [field, delta] = b.dataset.adjust.split(':');
       child[field] = Math.max(0, child[field] + parseInt(delta));
       renderParentBody(); render();
-      try{ await sb.from('children').update({[field]: child[field]}).eq('id', child.id); }catch(err){ handleSyncError(err); }
+      try{ await sb.from('children').update({[field]: child[field]}).eq('id', child.id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
 
@@ -1104,7 +1271,7 @@ function wireParentBody(){
       const val = inp.value.trim();
       if(val){
         c.name = val; render();
-        try{ await sb.from('children').update({name:val}).eq('id', c.id); }catch(err){ handleSyncError(err); }
+        try{ await sb.from('children').update({name:val}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
       } else { inp.value = c.name; }
     };
   });
@@ -1122,7 +1289,7 @@ function wireParentBody(){
           localStorage.setItem(ACTIVE_CHILD_KEY, child.id);
         }
         renderParentBody(); render();
-        try{ await sb.from('children').delete().eq('id', c.id); }catch(err){ handleSyncError(err); }
+        try{ await sb.from('children').delete().eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
       }
     };
   });
@@ -1147,7 +1314,7 @@ function wireParentBody(){
     if(newPin.length===4 && /^\d{4}$/.test(newPin)){
       state.pin = newPin;
       toast('PIN updated ✅');
-      try{ await sb.from('family_settings').update({pin:newPin}).eq('user_id', authUserId); }catch(err){ handleSyncError(err); }
+      try{ await sb.from('family_settings').update({pin:newPin}).eq('user_id', authUserId).throwOnError(); }catch(err){ handleSyncError(err); }
     } else {
       toast('Enter a 4-digit PIN');
     }
@@ -1163,12 +1330,12 @@ function wireParentBody(){
       ensureWeek(child);
       closeParent(); render();
       try{
-        await sb.from('entries').delete().eq('child_id', fresh.id);
-        await sb.from('chores').delete().eq('child_id', fresh.id);
-        await sb.from('prizes').delete().eq('child_id', fresh.id);
-        await sb.from('children').update({points:0, minutes:0, week_start: fresh.weekStart}).eq('id', fresh.id);
-        await sb.from('chores').insert(fresh.chores.map(c=>({id:c.id, child_id:fresh.id, label:c.label, emoji:c.emoji, points:c.points, repeatable:c.repeatable})));
-        await sb.from('prizes').insert(fresh.prizes.map(p=>({id:p.id, child_id:fresh.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null})));
+        await sb.from('entries').delete().eq('child_id', fresh.id).throwOnError();
+        await sb.from('chores').delete().eq('child_id', fresh.id).throwOnError();
+        await sb.from('prizes').delete().eq('child_id', fresh.id).throwOnError();
+        await sb.from('children').update({points:0, minutes:0, week_start: fresh.weekStart}).eq('id', fresh.id).throwOnError();
+        await sb.from('chores').insert(fresh.chores.map(c=>({id:c.id, child_id:fresh.id, label:c.label, emoji:c.emoji, points:c.points, repeatable:c.repeatable, schedule:c.schedule||null}))).throwOnError();
+        await sb.from('prizes').insert(fresh.prizes.map(p=>({id:p.id, child_id:fresh.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null}))).throwOnError();
       }catch(err){ handleSyncError(err); }
     }
   };
@@ -1225,7 +1392,7 @@ function homeHTML(){
   const goodDays = goodDaysThisWeekApproved(child);
   const streakDots = Array.from({length:5}).map((_,i)=>`<div class="streak-dot ${i<goodDays?'filled':''}"></div>`).join('');
 
-  const choreCards = child.chores.map(c=>{
+  const choreCards = child.chores.filter(isChoreVisibleToday).map(c=>{
     const todays = entriesToday(child, 'chore', c.id);
     const approvedCount = todays.filter(e=>e.status==='approved').length;
     const pendingCount = todays.filter(e=>e.status==='pending').length;
@@ -1589,6 +1756,9 @@ document.getElementById('dayClose').addEventListener('click', closeDay);
 document.getElementById('dayOverlay').addEventListener('click', (e)=>{ if(e.target.id==='dayOverlay') closeDay(); });
 document.getElementById('iconClose').addEventListener('click', closeIconPicker);
 document.getElementById('iconOverlay').addEventListener('click', (e)=>{ if(e.target.id==='iconOverlay') closeIconPicker(); });
+document.getElementById('scheduleClose').addEventListener('click', closeSchedulePicker);
+document.getElementById('scheduleOverlay').addEventListener('click', (e)=>{ if(e.target.id==='scheduleOverlay') closeSchedulePicker(); });
+document.getElementById('scheduleSaveBtn').addEventListener('click', saveSchedule);
 document.getElementById('undoToastBtn').addEventListener('click', performUndo);
 
 let view = 'home';
@@ -1600,7 +1770,10 @@ let historyWeekOffset = 0;    // 0 = this week, -1 = last week, ...
 let historyMonthOffset = 0;   // 0 = this month, -1 = last month, ...
 let pendingChoreIcon = '⭐';
 let pendingPrizeIcon = '🎁';
+let pendingChoreSchedule = {type:'daily'};
 let iconPickerContext = null; // {type:'newChore'|'newPrize'|'editChore'|'editPrize', id?}
+let schedulePickerContext = null; // {type:'newChore'|'editChore', id?}
+let scheduleDraft = {type:'daily'};
 let settingsTab = 'profile'; // 'profile' | 'points' | 'manual' | 'data'
 let manualEntryType = null; // null | 'school' | 'chore' | 'prize'
 
