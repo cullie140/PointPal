@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pointpal-cache-v36';
+const CACHE_NAME = 'pointpal-cache-v37';
 const ASSETS = [
   './',
   './index.html',
@@ -6,6 +6,7 @@ const ASSETS = [
   './manifest.json',
   './icon-192-v2.png',
   './icon-512-v2.png',
+  './apple-touch-icon-180.png',
   './logo-horizontal.png'
 ];
 

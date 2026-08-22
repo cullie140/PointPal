@@ -35,7 +35,8 @@ Flat, no build step, no dependencies:
 - `app.js` — the entire application: Supabase client + sync, multi-child state, business logic, and hand-rolled DOM rendering (HTML strings via template literals, re-rendered wholesale on `render()`).
 - `manifest.json` — PWA manifest (name, icons, theme colors, `orientation:"any"` for tablet landscape/portrait).
 - `sw.js` — service worker: cache-first-with-background-refresh for the app shell only (`CACHE_NAME` = `pointpal-cache-vNN`; explicitly ignores cross-origin requests so it never intercepts Supabase traffic). **Bump `CACHE_NAME` on every shipped change** — a stale SW cache masking edits is the most common "why isn't my change showing up" during local testing; the fix is unregister service worker + clear caches + hard reload.
-- `icon-192-v2.png`, `icon-512-v2.png` — app icons (renamed with a version suffix once already, to force iOS to drop its stubborn home-screen-icon cache — bump the suffix again if the icon ever needs to change and a cache-stuck report comes back).
+- `icon-192-v2.png`, `icon-512-v2.png` — favicon + web app manifest icons (renamed with a version suffix once already, to force iOS to drop its stubborn home-screen-icon cache — bump the suffix again if the icon ever needs to change and a cache-stuck report comes back).
+- `apple-touch-icon-180.png` — the iOS-specific Home Screen icon, referenced via `<link rel="apple-touch-icon" sizes="180x180">`. Kept as a separate file/size from `icon-192-v2.png` because iOS ignores the manifest entirely for "Add to Home Screen" and is picky about getting an exact-sized, fully opaque (no alpha) square at Apple's own recommended 180×180 — a same-but-different-size icon reportedly got silently padded with white and shrunk.
 
 ## Data model — Supabase, not localStorage
 
