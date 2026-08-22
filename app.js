@@ -87,7 +87,7 @@ function toEntryRow(entry, childId){
   return {
     id: entry.id, child_id: childId, ts: entry.ts, kind: entry.kind, ref_id: entry.refId || null,
     label: entry.label, emoji: entry.emoji, currency: entry.currency, amount: entry.amount,
-    status: entry.status
+    status: entry.status, fulfilled: entry.fulfilled || false, minutes_used: entry.minutesUsed || 0
   };
 }
 function rowsToChild(childRow, chores, prizes, challenges, punishments, entries){
@@ -104,7 +104,7 @@ function rowsToChild(childRow, chores, prizes, challenges, punishments, entries)
     prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, limitMax:p.limit_max||undefined, limitPeriod:p.limit_period||undefined})),
     challenges: challenges.filter(ch=>ch.child_id===childRow.id).map(ch=>({id:ch.id, choreId:ch.chore_id, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, startDate:ch.start_date||undefined, endDate:ch.end_date||undefined})),
     punishments: punishments.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, blockPoints:p.block_points, blockMinutes:p.block_minutes, blockPrizes:p.block_prizes, endsAt:Number(p.ends_at)})),
-    entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status}))
+    entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status, fulfilled:!!e.fulfilled, minutesUsed:Number(e.minutes_used)||0}))
   };
 }
 async function insertChildFull(c){
@@ -321,7 +321,7 @@ function maybeGrantChallengeBonus(c, ch, status){
   if(!isChallengeActive(ch, todayKey())) return null;
   if(challengeProgress(c, ch) < ch.target) return null;
   if(challengeBonusGranted(c, ch)) return null;
-  const bonus = { id:uid(), ts:Date.now(), kind:'bonus', refId:ch.id, label:`${ch.label} Bonus!`, emoji:'🏆', currency:ch.currency, amount:ch.bonus, status };
+  const bonus = { id:uid(), ts:Date.now(), kind:'bonus', refId:ch.id, label:`${ch.label} Bonus!`, emoji:'🏆', currency:ch.currency, amount:ch.bonus, status, fulfilled:false, minutesUsed:0 };
   c.entries.push(bonus);
   if(status==='approved'){ if(ch.currency==='points') c.points+=ch.bonus; else c.minutes+=ch.bonus; }
   return bonus;
@@ -407,7 +407,7 @@ async function requestChore(choreId, evt){
     const already = entriesToday(child, 'chore', choreId).some(e=>e.status!=='denied');
     if(already){ toast(`${chore.label} is already done for today! 🎉`); return; }
   }
-  const entry = { id:uid(), ts:Date.now(), kind:'chore', refId:choreId, label:chore.label, emoji:chore.emoji, currency:chore.currency, amount:chore.amount, status:'pending' };
+  const entry = { id:uid(), ts:Date.now(), kind:'chore', refId:choreId, label:chore.label, emoji:chore.emoji, currency:chore.currency, amount:chore.amount, status:'pending', fulfilled:false, minutesUsed:0 };
   child.entries.push(entry);
   spawnFloaterAt(evt, `+${chore.amount} ${chore.currency==='points'?'pts':'min'} (pending)`, 'var(--gold-deep)');
   toast(`Sent "${chore.label}" for approval ⏳`);
@@ -433,7 +433,7 @@ async function addPastChore(choreId, dateStr){
     const already = entriesForDay(child, dk).some(e=>e.kind==='chore' && e.refId===choreId && e.status!=='denied');
     if(already){ toast(`${chore.label} already has an entry that day`); return; }
   }
-  const entry = { id:uid(), ts:d.getTime(), kind:'chore', refId:choreId, label:chore.label, emoji:chore.emoji, currency:chore.currency, amount:chore.amount, status:'approved' };
+  const entry = { id:uid(), ts:d.getTime(), kind:'chore', refId:choreId, label:chore.label, emoji:chore.emoji, currency:chore.currency, amount:chore.amount, status:'approved', fulfilled:false, minutesUsed:0 };
   child.entries.push(entry);
   if(chore.currency==='points') child.points += chore.amount; else child.minutes += chore.amount;
   const bonuses = checkChallengesForApproval(child, entry, 'approved');
@@ -454,7 +454,8 @@ async function addPastPrizeRedemption(prizeId, dateStr){
   if(!d) return;
   const entry = {
     id:uid(), ts:d.getTime(), kind:'redeem', refId:prizeId,
-    label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'approved'
+    label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'approved',
+    fulfilled:false, minutesUsed:0
   };
   child.entries.push(entry);
   child.points = Math.max(0, child.points - prize.cost);
@@ -476,7 +477,8 @@ async function requestPrize(prizeId, evt){
   if(already){ toast('Already waiting on approval for that one!'); return; }
   const entry = {
     id:uid(), ts:Date.now(), kind:'redeem', refId:prizeId,
-    label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'pending'
+    label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'pending',
+    fulfilled:false, minutesUsed:0
   };
   child.entries.push(entry);
   spawnFloaterAt(evt, `Requested!`, 'var(--coral-deep)');
@@ -553,6 +555,38 @@ async function denyEntry(id, opts){
   e.status='denied';
   render();
   try{ await sb.from('entries').update({status:'denied'}).eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
+}
+
+async function markFulfilled(id){
+  if(!requireOnline()) return;
+  const owner = findEntryOwner(id);
+  if(!owner) return;
+  const e = owner.entry;
+  if(e.kind!=='redeem' || e.status!=='approved' || e.fulfilled) return;
+  e.fulfilled = true;
+  toast(`Marked "${e.label}" as delivered ✅`);
+  renderParentBody(); render();
+  try{ await sb.from('entries').update({fulfilled:true}).eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
+}
+
+async function logMinutesUsed(id, amount){
+  if(!requireOnline()) return;
+  const owner = findEntryOwner(id);
+  if(!owner) return;
+  const c = owner.child, e = owner.entry;
+  if(e.status!=='approved' || e.currency!=='minutes') return;
+  const remaining = e.amount - (e.minutesUsed||0);
+  const amt = Math.min(remaining, Math.max(0, Math.floor(amount) || 0));
+  if(amt<=0){ toast('Enter a valid number of minutes'); return; }
+  e.minutesUsed = (e.minutesUsed||0) + amt;
+  c.minutes = Math.max(0, c.minutes - amt);
+  const left = e.amount - e.minutesUsed;
+  toast(`Logged ${amt} min used from "${e.label}" — ${left} min left`);
+  renderParentBody(); render();
+  try{
+    await sb.from('entries').update({minutes_used:e.minutesUsed}).eq('id', id).throwOnError();
+    await sb.from('children').update({minutes:c.minutes}).eq('id', c.id).throwOnError();
+  }catch(err){ handleSyncError(err); }
 }
 
 /* ============ UNDO TOAST ============ */
@@ -820,16 +854,21 @@ function renderParentBody(){
 
 function parentApproveHTML(){
   const pend = pendingEntries();
-  if(pend.length===0){
+  const multiChild = state.children.length > 1;
+  const unfulfilled = state.children.flatMap(c=>c.entries
+    .filter(e=>e.kind==='redeem' && e.status==='approved' && !e.fulfilled)
+    .map(e=>Object.assign({}, e, {_childId:c.id, _childName:c.name}))
+  ).sort((a,b)=>a.ts-b.ts);
+
+  if(pend.length===0 && unfulfilled.length===0){
     return `<div class="empty-state"><div class="e">✅</div>Nothing waiting on you right now.</div>`;
   }
-  const header = `
+
+  const pendHTML = pend.length ? `
     <div class="approve-all-row">
       <div class="approve-all-count">${pend.length} waiting</div>
       <button class="btn-bulk-approve" id="bulkApproveBtn">Approve All</button>
-    </div>`;
-  const multiChild = state.children.length > 1;
-  return header + pend.map(e=>{
+    </div>` + pend.map(e=>{
     const sign = e.kind==='redeem' ? '−' : '+';
     const cur = e.currency==='points' ? 'pts' : 'min';
     let extra = '';
@@ -851,7 +890,23 @@ function parentApproveHTML(){
         <button class="btn btn-deny" data-deny="${e.id}">Deny</button>
       </div>
     </div>`;
-  }).join('');
+  }).join('') : '';
+
+  const fulfillHTML = unfulfilled.length ? `
+    <div class="approve-all-row" style="margin-top:${pend.length?'22px':'0'};">
+      <div class="approve-all-count">${unfulfilled.length} claimed, not delivered yet</div>
+    </div>` + unfulfilled.map(e=>`
+    <div class="approval-item">
+      <div class="approval-top">
+        <div class="approval-label">${e.emoji} ${e.label}${multiChild?` <span class="child-tag">${e._childName}</span>`:''}</div>
+      </div>
+      <div class="approval-meta">Approved ${timeAgo(e.ts)}</div>
+      <div class="approval-actions">
+        <button class="btn btn-approve" data-fulfill="${e.id}">Mark Delivered</button>
+      </div>
+    </div>`).join('') : '';
+
+  return pendHTML + fulfillHTML;
 }
 
 function parentChoresHTML(){
@@ -1413,6 +1468,22 @@ function settingsProfileHTML(){
 }
 
 function settingsPointsHTML(){
+  const openMinuteEntries = child.entries
+    .filter(e=>e.status==='approved' && e.currency==='minutes' && (e.amount-(e.minutesUsed||0))>0)
+    .sort((a,b)=>b.ts-a.ts);
+  const logSection = openMinuteEntries.length ? `
+    <div class="settings-row" style="margin-top:22px; flex-direction:column; align-items:stretch; gap:8px;">
+      <div class="settings-label">Log screen time used</div>
+      <div class="sheet-sub" style="margin:0 0 4px;">Pick which earned minutes were spent and how many, so ${child.name} can see what's left.</div>
+      <select id="minutesLogSelect" class="child-name-input">
+        ${openMinuteEntries.map(e=>`<option value="${e.id}">${e.emoji} ${e.label} — ${e.amount-(e.minutesUsed||0)} of ${e.amount} min left</option>`).join('')}
+      </select>
+      <div style="display:flex; gap:8px;">
+        <input id="minutesLogAmount" class="settings-input" type="number" min="1" placeholder="min used" style="flex:1;">
+        <button class="btn btn-primary" id="logMinutesBtn">Log Used</button>
+      </div>
+    </div>
+  ` : '';
   return `
     <div class="sheet-sub" style="margin-bottom:8px;">Adjusting <b>${child.name}</b>'s balance.</div>
     <div class="settings-row">
@@ -1431,6 +1502,7 @@ function settingsPointsHTML(){
         <button class="icon-btn-sm" data-adjust="minutes:5">+5</button>
       </div>
     </div>
+    ${logSection}
   `;
 }
 
@@ -1509,6 +1581,7 @@ function settingsDataHTML(){
 function wireParentBody(){
   document.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>approveEntry(b.dataset.approve));
   document.querySelectorAll('[data-deny]').forEach(b=>b.onclick=()=>denyEntry(b.dataset.deny));
+  document.querySelectorAll('[data-fulfill]').forEach(b=>b.onclick=()=>markFulfilled(b.dataset.fulfill));
   const bulkApproveBtn = document.getElementById('bulkApproveBtn');
   if(bulkApproveBtn) bulkApproveBtn.onclick=()=>bulkApproveAll();
 
@@ -1685,6 +1758,14 @@ function wireParentBody(){
       try{ await sb.from('children').update({[field]: child[field]}).eq('id', child.id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
+  const logMinutesBtn = document.getElementById('logMinutesBtn');
+  if(logMinutesBtn) logMinutesBtn.onclick=()=>{
+    const select = document.getElementById('minutesLogSelect');
+    const amountInput = document.getElementById('minutesLogAmount');
+    const amt = parseInt(amountInput.value);
+    if(!select.value || !amt){ toast('Enter a valid number of minutes'); return; }
+    logMinutesUsed(select.value, amt);
+  };
 
   document.querySelectorAll('[data-stab]').forEach(b=>{
     b.onclick=()=>{ settingsTab = b.dataset.stab; manualEntryType = null; renderParentBody(); };
@@ -1984,12 +2065,18 @@ function historyItemRowHTML(e){
   if(e.status==='approved'){ amtClass = e.kind==='redeem'?'neg':'pos'; amtText=`${sign}${e.amount} ${cur}`; }
   else if(e.status==='pending'){ amtClass='wait'; amtText=`${sign}${e.amount} ${cur} · pending`; }
   else { amtClass='deny'; amtText=`${sign}${e.amount} ${cur} · denied`; }
+  let subMeta = '';
+  if(e.status==='approved' && e.kind==='redeem'){
+    subMeta = e.fulfilled ? '' : ` · <span style="color:var(--coral);">not delivered yet</span>`;
+  } else if(e.status==='approved' && e.currency==='minutes' && (e.minutesUsed||0)>0){
+    subMeta = ` · ${e.minutesUsed} of ${e.amount} min used`;
+  }
   return `
   <div class="history-item">
     <div class="history-emoji">${e.emoji}</div>
     <div class="history-info">
       <div class="history-label">${e.label}</div>
-      <div class="history-meta">${timeAgo(e.ts)}</div>
+      <div class="history-meta">${timeAgo(e.ts)}${subMeta}</div>
     </div>
     <div class="history-amount ${amtClass}">${amtText}</div>
   </div>`;
