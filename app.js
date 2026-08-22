@@ -13,6 +13,17 @@ const ICON_SET = [
   '⚽','🚲','🏊','🎢','🛍️','💰','🌟','🐠'
 ];
 
+const AVATAR_SET = [
+  '🦖','🦕',
+  '🚧','🚜','🏗️','🚛','🚚','⚙️','🔧','🔨','🛠️',
+  '🦥',
+  '🚀','🪐','🌌','👽','🛸','🌙','☄️','🌠','⭐',
+  '🧪','🔬','🧬','⚗️','🧫','🔭',
+  '🥷','⚔️','🌀','💨',
+  '🦸','🦸‍♂️','🦸‍♀️','🛡️','⚡','💥',
+  '👾','🎮','🐉'
+];
+
 const DEFAULT_CHORES = [
   { id:'dishes',   label:'Dishes',             emoji:'🍽️', amount:5,  currency:'points', repeatable:false },
   { id:'brush',    label:'Brush Teeth',        emoji:'🪥', amount:5,  currency:'points', repeatable:false },
@@ -37,6 +48,8 @@ const DEFAULT_PRIZES = [
 function makeChild(id, name){
   return {
     id, name,
+    avatar: AVATAR_SET[0],
+    pin: (state && state.pin) || '1234',
     points: 0,
     minutes: 0,
     weekStart: null,          // ISO date (Monday) this week's streak is counted against
@@ -81,6 +94,8 @@ function rowsToChild(childRow, chores, prizes, challenges, punishments, entries)
   return {
     id: childRow.id,
     name: childRow.name,
+    avatar: childRow.avatar || AVATAR_SET[0],
+    pin: childRow.pin || null,
     points: childRow.points,
     minutes: childRow.minutes,
     weekStart: childRow.week_start,
@@ -93,7 +108,7 @@ function rowsToChild(childRow, chores, prizes, challenges, punishments, entries)
   };
 }
 async function insertChildFull(c){
-  await sb.from('children').insert({id:c.id, name:c.name, points:c.points, minutes:c.minutes, week_start:c.weekStart}).throwOnError();
+  await sb.from('children').insert({id:c.id, name:c.name, avatar:c.avatar, pin:c.pin, points:c.points, minutes:c.minutes, week_start:c.weekStart}).throwOnError();
   if(c.chores.length) await sb.from('chores').insert(c.chores.map(ch=>({id:ch.id, child_id:c.id, label:ch.label, emoji:ch.emoji, amount:ch.amount, currency:ch.currency, repeatable:ch.repeatable, schedule:ch.schedule||null}))).throwOnError();
   if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}))).throwOnError();
   if(c.challenges.length) await sb.from('challenges').insert(c.challenges.map(ch=>({id:ch.id, child_id:c.id, chore_id:ch.choreId, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, start_date:ch.startDate||null, end_date:ch.endDate||null}))).throwOnError();
@@ -617,6 +632,13 @@ function savePinLockState(s){
   try{ localStorage.setItem(PIN_LOCK_KEY, JSON.stringify(s)); }catch(e){}
 }
 
+function pinPromptLabel(ctx){
+  if(ctx && ctx.type==='child'){
+    const c = state.children.find(x=>x.id===ctx.childId);
+    return c ? `${c.avatar} ${c.name}'s PIN` : 'Enter PIN';
+  }
+  return 'Parent PIN';
+}
 function openPin(ctx){
   pinContext = ctx;
   pinBuffer='';
@@ -646,7 +668,7 @@ function updatePinLockUI(){
         clearInterval(pinLockTimer);
         savePinLockState({fails:0, lockUntil:null});
         pad.style.display = 'grid';
-        title.textContent = 'Parent PIN';
+        title.textContent = pinPromptLabel(pinContext);
         sub.textContent = 'Enter the 4-digit code';
         renderPinDots();
       }
@@ -655,7 +677,7 @@ function updatePinLockUI(){
     pinLockTimer = setInterval(tick, 1000);
   } else {
     pad.style.display = 'grid';
-    title.textContent = 'Parent PIN';
+    title.textContent = pinPromptLabel(pinContext);
     sub.textContent = 'Enter the 4-digit code';
     renderPinDots();
   }
@@ -670,10 +692,16 @@ function pressPinKey(k){
   renderPinDots();
   if(pinBuffer.length===4){
     setTimeout(()=>{
-      if(pinBuffer===state.pin){
+      const expected = (pinContext && pinContext.type==='child')
+        ? ((state.children.find(c=>c.id===pinContext.childId)||{}).pin || state.pin)
+        : state.pin;
+      if(pinBuffer===expected){
         savePinLockState({fails:0, lockUntil:null});
         closePin();
-        if(pinContext==='unlock'){ openParent(); }
+        hideLockScreen();
+        resetAppIdleTimer();
+        if(pinContext && pinContext.type==='child'){ switchChild(pinContext.childId); }
+        else { openParent(); }
       } else {
         const newFails = lock.fails + 1;
         if(newFails >= PIN_MAX_FAILS){
@@ -716,31 +744,58 @@ function buildPinPad(){
   });
 }
 
-/* ============ PARENT ZONE ============ */
-const PARENT_IDLE_MS = 120000; // auto-lock Parent Zone after 2 idle minutes
-let parentLastActivity = 0;
-let parentIdleChecker = null;
-function resetParentIdleTimer(){ parentLastActivity = Date.now(); }
-function startParentIdleWatch(){
-  resetParentIdleTimer();
-  document.addEventListener('click', resetParentIdleTimer);
-  document.addEventListener('input', resetParentIdleTimer);
-  document.addEventListener('touchstart', resetParentIdleTimer);
-  clearInterval(parentIdleChecker);
-  parentIdleChecker = setInterval(()=>{
-    if(Date.now() - parentLastActivity > PARENT_IDLE_MS){
-      closeParent();
-      toast('Parent Zone locked (idle) 🔒');
+/* ============ KIOSK IDLE LOCK ============ */
+const APP_IDLE_MS = 30000; // drop to the lock screen after 30 idle seconds
+let appLastActivity = 0;
+let appIdleChecker = null;
+let kioskLocked = false;
+
+function resetAppIdleTimer(){ appLastActivity = Date.now(); }
+function startAppIdleWatch(){
+  resetAppIdleTimer();
+  document.addEventListener('click', resetAppIdleTimer);
+  document.addEventListener('input', resetAppIdleTimer);
+  document.addEventListener('touchstart', resetAppIdleTimer);
+  appIdleChecker = setInterval(()=>{
+    if(!kioskLocked && Date.now() - appLastActivity > APP_IDLE_MS){
+      showLockScreen();
     }
   }, 5000);
 }
-function stopParentIdleWatch(){
-  clearInterval(parentIdleChecker);
-  document.removeEventListener('click', resetParentIdleTimer);
-  document.removeEventListener('input', resetParentIdleTimer);
-  document.removeEventListener('touchstart', resetParentIdleTimer);
+
+function renderLockScreen(){
+  const grid = document.getElementById('lockGrid');
+  if(!grid) return;
+  grid.style.gridTemplateColumns = state.children.length<=1 ? '1fr' : 'repeat(2,1fr)';
+  grid.innerHTML = state.children.map(c=>`
+    <button class="lock-tile" data-lock-child="${c.id}">
+      <div class="lock-tile-avatar">${c.avatar}</div>
+      <div class="lock-tile-name">${c.name}</div>
+    </button>`).join('') + `
+    <button class="lock-tile lock-tile-parent" data-lock-parent="1">
+      <div class="lock-tile-avatar">🔐</div>
+      <div class="lock-tile-name">Parent</div>
+    </button>`;
+  grid.querySelectorAll('[data-lock-child]').forEach(b=>{
+    b.onclick=()=>openPin({type:'child', childId:b.dataset.lockChild});
+  });
+  const parentTile = grid.querySelector('[data-lock-parent]');
+  if(parentTile) parentTile.onclick=()=>openPin({type:'parent'});
+}
+function showLockScreen(){
+  if(kioskLocked) return;
+  kioskLocked = true;
+  document.querySelectorAll('.overlay.show').forEach(el=>el.classList.remove('show'));
+  pinBuffer=''; pinContext=null;
+  renderLockScreen();
+  document.getElementById('kioskLockScreen').classList.add('show');
+}
+function hideLockScreen(){
+  kioskLocked = false;
+  document.getElementById('kioskLockScreen').classList.remove('show');
 }
 
+/* ============ PARENT ZONE ============ */
 function openParent(){
   activeParentTab='approve';
   settingsTab='profile';
@@ -748,10 +803,8 @@ function openParent(){
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.ptab==='approve'));
   renderParentBody();
   document.getElementById('parentOverlay').classList.add('show');
-  startParentIdleWatch();
 }
 function closeParent(){
-  stopParentIdleWatch();
   document.getElementById('parentOverlay').classList.remove('show');
 }
 function renderParentBody(){
@@ -924,10 +977,13 @@ function parentPrizesHTML(){
 }
 
 function iconPickerHTML(){
-  return `<div class="icon-grid">${ICON_SET.map(ic=>`<button data-icon="${ic}">${ic}</button>`).join('')}</div>`;
+  const set = (iconPickerContext && iconPickerContext.type==='childAvatar') ? AVATAR_SET : ICON_SET;
+  return `<div class="icon-grid">${set.map(ic=>`<button data-icon="${ic}">${ic}</button>`).join('')}</div>`;
 }
 function openIconPicker(ctx){
   iconPickerContext = ctx;
+  const title = document.getElementById('iconPickerTitle');
+  if(title) title.textContent = ctx.type==='childAvatar' ? 'Pick an Avatar' : 'Pick an Icon';
   document.getElementById('iconPickerBody').innerHTML = iconPickerHTML();
   document.querySelectorAll('#iconPickerBody [data-icon]').forEach(b=>{
     b.onclick=()=>pickIcon(b.dataset.icon);
@@ -958,6 +1014,10 @@ async function pickIcon(emoji){
     if(!requireOnline()) return;
     const p = child.prizes.find(x=>x.id===ctx.id);
     if(p){ p.emoji = emoji; render(); try{ await sb.from('prizes').update({emoji}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); } }
+  } else if(ctx.type==='childAvatar'){
+    if(!requireOnline()) return;
+    const c = state.children.find(x=>x.id===ctx.id);
+    if(c){ c.avatar = emoji; renderParentBody(); render(); try{ await sb.from('children').update({avatar:emoji}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); } }
   }
 }
 
@@ -1325,14 +1385,18 @@ function settingsProfileHTML(){
   const rows = state.children.map(c=>`
     <div class="list-edit-item">
       <div class="item-row-main">
+        <button class="icon-swatch" data-edit-child-avatar="${c.id}">${c.avatar}</button>
         <input class="label-edit" data-child-name="${c.id}" value="${c.name}">
         <button class="icon-btn-sm" data-child-del="${c.id}" ${state.children.length<=1?'disabled':''}>Remove</button>
+      </div>
+      <div class="item-row-meta">
+        <input class="settings-input" data-child-pin="${c.id}" value="${c.pin||''}" maxlength="4" inputmode="numeric" placeholder="PIN">
       </div>
     </div>
   `).join('');
   return `
     <div class="settings-label">Children</div>
-    <div class="sheet-sub" style="margin-bottom:8px;">Switch between kids using the tabs at the top of Home.</div>
+    <div class="sheet-sub" style="margin-bottom:8px;">Switch between kids using the tabs at the top of Home. Each child needs their own 4-digit PIN to switch into their view.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
       <input id="newChildName" class="child-name-input" placeholder="Add a child" style="flex:1; margin-top:10px;">
@@ -1340,7 +1404,7 @@ function settingsProfileHTML(){
     </div>
 
     <div class="settings-row" style="margin-top:22px;">
-      <div class="settings-label">Change PIN</div>
+      <div class="settings-label">Change Parent PIN</div>
     </div>
     <input class="child-name-input" id="newPinInput" placeholder="New 4-digit PIN" maxlength="4" inputmode="numeric">
 
@@ -1652,6 +1716,23 @@ function wireParentBody(){
       } else { inp.value = c.name; }
     };
   });
+  document.querySelectorAll('[data-edit-child-avatar]').forEach(b=>{
+    b.onclick=()=>openIconPicker({type:'childAvatar', id:b.dataset.editChildAvatar});
+  });
+  document.querySelectorAll('[data-child-pin]').forEach(inp=>{
+    inp.onchange=async ()=>{
+      const c = state.children.find(x=>x.id===inp.dataset.childPin);
+      if(!c || !requireOnline()) return;
+      const val = inp.value.trim();
+      if(/^\d{4}$/.test(val)){
+        c.pin = val;
+        try{ await sb.from('children').update({pin:val}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
+      } else {
+        inp.value = c.pin || '';
+        toast('Enter a 4-digit PIN');
+      }
+    };
+  });
   document.querySelectorAll('[data-child-del]').forEach(b=>{
     b.onclick=async ()=>{
       if(!requireOnline()) return;
@@ -1676,6 +1757,7 @@ function wireParentBody(){
     const name = document.getElementById('newChildName').value.trim();
     if(!name) return;
     const newChild = makeChild(uid(), name);
+    newChild.avatar = AVATAR_SET[state.children.length % AVATAR_SET.length];
     state.children.push(newChild);
     state.activeChildId = newChild.id;
     child = newChild;
@@ -1702,6 +1784,8 @@ function wireParentBody(){
     if(confirm(`This will erase all of ${child.name}'s points, minutes, and history. Are you sure?`)){
       const idx = state.children.findIndex(c=>c.id===child.id);
       const fresh = makeChild(child.id, child.name);
+      fresh.avatar = child.avatar;
+      fresh.pin = child.pin;
       state.children[idx] = fresh;
       child = fresh;
       ensureWeek(child);
@@ -1724,7 +1808,7 @@ function wireParentBody(){
 /* ============ RENDER: main views ============ */
 function render(){
   ensureWeek(child);
-  document.getElementById('greetingName').textContent = `Hey, ${child.name}! 👋`;
+  document.getElementById('greetingName').textContent = `Hey, ${child.avatar} ${child.name}! 👋`;
   document.getElementById('dateLine').textContent = new Date().toLocaleDateString(undefined,{weekday:'long', month:'short', day:'numeric'});
   document.getElementById('pointsVal').textContent = child.points;
   document.getElementById('minutesVal').textContent = child.minutes;
@@ -1760,10 +1844,14 @@ function renderChildSwitcher(){
   if(state.children.length<=1){ row.style.display='none'; row.innerHTML=''; return; }
   row.style.display='flex';
   row.innerHTML = state.children.map(c=>
-    `<button class="child-pill ${c.id===child.id?'active':''}" data-switch-child="${c.id}">${c.name}</button>`
+    `<button class="child-pill ${c.id===child.id?'active':''}" data-switch-child="${c.id}">${c.avatar} ${c.name}</button>`
   ).join('');
   row.querySelectorAll('[data-switch-child]').forEach(b=>{
-    b.onclick=()=>switchChild(b.dataset.switchChild);
+    b.onclick=()=>{
+      const id = b.dataset.switchChild;
+      if(id===child.id) return;
+      openPin({type:'child', childId:id});
+    };
   });
 }
 
@@ -2145,6 +2233,7 @@ async function afterAuth(){
     render();
     scheduleMidnightRefresh();
     subscribeRealtime();
+    startAppIdleWatch();
   }catch(err){
     console.error('boot error', err);
     document.getElementById('loadingSub').textContent = 'Connection problem — retrying…';
@@ -2177,7 +2266,7 @@ document.getElementById('loginBtn').addEventListener('click', async ()=>{
 document.querySelectorAll('.nav-btn').forEach(b=>{
   b.addEventListener('click', ()=>{ view=b.dataset.view; fishSpawned = fishSpawned; render(); });
 });
-document.getElementById('lockBtn').addEventListener('click', ()=>openPin('unlock'));
+document.getElementById('lockBtn').addEventListener('click', ()=>openPin({type:'parent'}));
 document.getElementById('pinCancel').addEventListener('click', closePin);
 document.getElementById('parentClose').addEventListener('click', closeParent);
 document.querySelectorAll('[data-ptab]').forEach(b=>{
@@ -2208,7 +2297,7 @@ document.getElementById('limitSaveBtn').addEventListener('click', saveLimit);
 document.getElementById('undoToastBtn').addEventListener('click', performUndo);
 
 let view = 'home';
-let pinContext = null;   // 'unlock' -> opens parent overlay
+let pinContext = null;   // {type:'parent'} | {type:'child', childId}
 let pinBuffer = '';
 let activeParentTab = 'approve';
 let historyMode = 'week';     // 'week' | 'month'
