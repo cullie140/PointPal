@@ -37,7 +37,7 @@ const DEFAULT_CHALLENGES = [
   { id:'default-school', choreId:'school', label:'Good Day at School Streak', target:5, bonus:120, currency:'minutes', type:'recurring' }
 ];
 const DEFAULT_PRIZES = [
-  { id:'p5min',    label:'5 Minutes Electronics',   emoji:'⏱️', cost:20 },
+  { id:'p5min',    label:'5 Minutes Electronics',   emoji:'⏱️', cost:20, grantsMinutes:5 },
   { id:'treat',    label:'Extra Treat or Dessert',  emoji:'🍪', cost:100 },
   { id:'icecream', label:'Go Out for Ice Cream',    emoji:'🍦', cost:250 },
   { id:'toy',      label:'$5–$10 Toy',              emoji:'🧸', cost:250 },
@@ -87,7 +87,8 @@ function toEntryRow(entry, childId){
   return {
     id: entry.id, child_id: childId, ts: entry.ts, kind: entry.kind, ref_id: entry.refId || null,
     label: entry.label, emoji: entry.emoji, currency: entry.currency, amount: entry.amount,
-    status: entry.status, fulfilled: entry.fulfilled || false, minutes_used: entry.minutesUsed || 0
+    status: entry.status, fulfilled: entry.fulfilled || false, minutes_used: entry.minutesUsed || 0,
+    grants_minutes: entry.grantsMinutes || 0
   };
 }
 function rowsToChild(childRow, chores, prizes, challenges, punishments, entries){
@@ -101,16 +102,16 @@ function rowsToChild(childRow, chores, prizes, challenges, punishments, entries)
     weekStart: childRow.week_start,
     goalPrizeId: childRow.goal_prize_id || null,
     chores: chores.filter(c=>c.child_id===childRow.id).map(c=>({id:c.id, label:c.label, emoji:c.emoji, amount:c.amount, currency:c.currency, repeatable:c.repeatable, schedule:c.schedule||undefined})),
-    prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, limitMax:p.limit_max||undefined, limitPeriod:p.limit_period||undefined})),
+    prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, grantsMinutes:p.grants_minutes||undefined, limitMax:p.limit_max||undefined, limitPeriod:p.limit_period||undefined})),
     challenges: challenges.filter(ch=>ch.child_id===childRow.id).map(ch=>({id:ch.id, choreId:ch.chore_id, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, startDate:ch.start_date||undefined, endDate:ch.end_date||undefined})),
     punishments: punishments.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, blockPoints:p.block_points, blockMinutes:p.block_minutes, blockPrizes:p.block_prizes, endsAt:Number(p.ends_at)})),
-    entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status, fulfilled:!!e.fulfilled, minutesUsed:Number(e.minutes_used)||0}))
+    entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status, fulfilled:!!e.fulfilled, minutesUsed:Number(e.minutes_used)||0, grantsMinutes:Number(e.grants_minutes)||0}))
   };
 }
 async function insertChildFull(c){
   await sb.from('children').insert({id:c.id, name:c.name, avatar:c.avatar, pin:c.pin, points:c.points, minutes:c.minutes, week_start:c.weekStart}).throwOnError();
   if(c.chores.length) await sb.from('chores').insert(c.chores.map(ch=>({id:ch.id, child_id:c.id, label:ch.label, emoji:ch.emoji, amount:ch.amount, currency:ch.currency, repeatable:ch.repeatable, schedule:ch.schedule||null}))).throwOnError();
-  if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}))).throwOnError();
+  if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null, limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}))).throwOnError();
   if(c.challenges.length) await sb.from('challenges').insert(c.challenges.map(ch=>({id:ch.id, child_id:c.id, chore_id:ch.choreId, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, start_date:ch.startDate||null, end_date:ch.endDate||null}))).throwOnError();
   if(c.punishments.length) await sb.from('punishments').insert(c.punishments.map(p=>({id:p.id, child_id:c.id, label:p.label, block_points:p.blockPoints, block_minutes:p.blockMinutes, block_prizes:p.blockPrizes, ends_at:p.endsAt}))).throwOnError();
 }
@@ -455,10 +456,11 @@ async function addPastPrizeRedemption(prizeId, dateStr){
   const entry = {
     id:uid(), ts:d.getTime(), kind:'redeem', refId:prizeId,
     label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'approved',
-    fulfilled:false, minutesUsed:0
+    fulfilled:true, minutesUsed:0, grantsMinutes:prize.grantsMinutes||0
   };
   child.entries.push(entry);
   child.points = Math.max(0, child.points - prize.cost);
+  if(entry.grantsMinutes>0) child.minutes += entry.grantsMinutes;
   toast(`Added "${prize.label}" redemption`);
   renderParentBody(); render();
   try{
@@ -478,7 +480,7 @@ async function requestPrize(prizeId, evt){
   const entry = {
     id:uid(), ts:Date.now(), kind:'redeem', refId:prizeId,
     label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'pending',
-    fulfilled:false, minutesUsed:0
+    fulfilled:false, minutesUsed:0, grantsMinutes:prize.grantsMinutes||0
   };
   child.entries.push(entry);
   spawnFloaterAt(evt, `Requested!`, 'var(--coral-deep)');
@@ -561,12 +563,21 @@ async function markFulfilled(id){
   if(!requireOnline()) return;
   const owner = findEntryOwner(id);
   if(!owner) return;
-  const e = owner.entry;
+  const c = owner.child, e = owner.entry;
   if(e.kind!=='redeem' || e.status!=='approved' || e.fulfilled) return;
   e.fulfilled = true;
-  toast(`Marked "${e.label}" as delivered ✅`);
+  if(e.grantsMinutes>0) c.minutes += e.grantsMinutes;
+  toast(e.grantsMinutes>0 ? `Marked "${e.label}" as delivered — +${e.grantsMinutes} min added ✅` : `Marked "${e.label}" as delivered ✅`);
   renderParentBody(); render();
-  try{ await sb.from('entries').update({fulfilled:true}).eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
+  try{
+    await sb.from('entries').update({fulfilled:true}).eq('id', id).throwOnError();
+    if(e.grantsMinutes>0) await sb.from('children').update({minutes:c.minutes}).eq('id', c.id).throwOnError();
+  }catch(err){ handleSyncError(err); }
+}
+
+function minutesGrantTotal(e){
+  if(e.kind==='redeem') return e.fulfilled ? (e.grantsMinutes||0) : 0;
+  return e.currency==='minutes' ? e.amount : 0;
 }
 
 async function logMinutesUsed(id, amount){
@@ -574,13 +585,15 @@ async function logMinutesUsed(id, amount){
   const owner = findEntryOwner(id);
   if(!owner) return;
   const c = owner.child, e = owner.entry;
-  if(e.status!=='approved' || e.currency!=='minutes') return;
-  const remaining = e.amount - (e.minutesUsed||0);
+  if(e.status!=='approved') return;
+  const total = minutesGrantTotal(e);
+  if(total<=0) return;
+  const remaining = total - (e.minutesUsed||0);
   const amt = Math.min(remaining, Math.max(0, Math.floor(amount) || 0));
   if(amt<=0){ toast('Enter a valid number of minutes'); return; }
   e.minutesUsed = (e.minutesUsed||0) + amt;
   c.minutes = Math.max(0, c.minutes - amt);
-  const left = e.amount - e.minutesUsed;
+  const left = total - e.minutesUsed;
   toast(`Logged ${amt} min used from "${e.label}" — ${left} min left`);
   renderParentBody(); render();
   try{
@@ -1010,12 +1023,13 @@ function parentPrizesHTML(){
       </div>
       <div class="item-row-meta">
         <input class="settings-input" type="number" min="0" data-prize-cost="${p.id}" value="${p.cost}">
+        <input class="settings-input" type="number" min="0" data-prize-minutes="${p.id}" value="${p.grantsMinutes||''}" placeholder="min">
         <button class="schedule-pill" data-edit-prize-limit="${p.id}">🔁 ${limitSummaryText(p.limitMax, p.limitPeriod)}</button>
       </div>
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Editing <b>${child.name}</b>'s prizes. Names, costs, and icons all update live. The 🔁 pill sets an optional redemption limit — cap how often a prize can be redeemed per day or week.</div>
+    <div class="sheet-sub">Editing <b>${child.name}</b>'s prizes. Names, costs, and icons all update live. "min" is optional — set it for screen-time prizes so marking a redemption Delivered also credits that many minutes. The 🔁 pill sets an optional redemption limit — cap how often a prize can be redeemed per day or week.</div>
     ${rows}
     <div class="list-edit-item" style="border-bottom:none;">
       <div class="item-row-main" style="margin-top:10px;">
@@ -1024,6 +1038,7 @@ function parentPrizesHTML(){
       </div>
       <div class="item-row-meta">
         <input id="newPrizeCost" class="settings-input" type="number" placeholder="cost">
+        <input id="newPrizeMinutes" class="settings-input" type="number" placeholder="min" min="0">
         <button class="schedule-pill" id="newPrizeLimitBtn">🔁 ${limitSummaryText(pendingPrizeLimit.max, pendingPrizeLimit.period)}</button>
       </div>
       <button class="btn btn-primary" id="addPrizeBtn" style="margin-top:10px;">Add Prize</button>
@@ -1469,14 +1484,14 @@ function settingsProfileHTML(){
 
 function settingsPointsHTML(){
   const openMinuteEntries = child.entries
-    .filter(e=>e.status==='approved' && e.currency==='minutes' && (e.amount-(e.minutesUsed||0))>0)
+    .filter(e=>e.status==='approved' && minutesGrantTotal(e)-(e.minutesUsed||0)>0)
     .sort((a,b)=>b.ts-a.ts);
   const logSection = openMinuteEntries.length ? `
     <div class="settings-row" style="margin-top:22px; flex-direction:column; align-items:stretch; gap:8px;">
       <div class="settings-label">Log screen time used</div>
       <div class="sheet-sub" style="margin:0 0 4px;">Pick which earned minutes were spent and how many, so ${child.name} can see what's left.</div>
       <select id="minutesLogSelect" class="child-name-input">
-        ${openMinuteEntries.map(e=>`<option value="${e.id}">${e.emoji} ${e.label} — ${e.amount-(e.minutesUsed||0)} of ${e.amount} min left</option>`).join('')}
+        ${openMinuteEntries.map(e=>{ const total = minutesGrantTotal(e); return `<option value="${e.id}">${e.emoji} ${e.label} — ${total-(e.minutesUsed||0)} of ${total} min left</option>`; }).join('')}
       </select>
       <div style="display:flex; gap:8px;">
         <input id="minutesLogAmount" class="settings-input" type="number" min="1" placeholder="min used" style="flex:1;">
@@ -1683,6 +1698,14 @@ function wireParentBody(){
       try{ await sb.from('prizes').update({cost:p.cost}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
+  document.querySelectorAll('[data-prize-minutes]').forEach(inp=>{
+    inp.onchange=async ()=>{
+      const p = child.prizes.find(x=>x.id===inp.dataset.prizeMinutes);
+      if(!p || !requireOnline()) return;
+      p.grantsMinutes = parseInt(inp.value)||0;
+      try{ await sb.from('prizes').update({grants_minutes:p.grantsMinutes}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
+    };
+  });
   document.querySelectorAll('[data-edit-prize-limit]').forEach(b=>{
     b.onclick=()=>openLimitPicker({type:'edit', id:b.dataset.editPrizeLimit});
   });
@@ -1707,13 +1730,14 @@ function wireParentBody(){
     if(!requireOnline()) return;
     const label = document.getElementById('newPrizeLabel').value.trim();
     const cost = parseInt(document.getElementById('newPrizeCost').value)||0;
+    const grantsMinutes = parseInt(document.getElementById('newPrizeMinutes').value)||0;
     if(!label) return;
-    const newPrize = {id:uid(), label, emoji:pendingPrizeIcon, cost, limitMax:pendingPrizeLimit.max, limitPeriod:pendingPrizeLimit.period};
+    const newPrize = {id:uid(), label, emoji:pendingPrizeIcon, cost, grantsMinutes, limitMax:pendingPrizeLimit.max, limitPeriod:pendingPrizeLimit.period};
     child.prizes.push(newPrize);
     pendingPrizeIcon = '🎁';
     pendingPrizeLimit = {max:undefined, period:'day'};
     renderParentBody(); render();
-    try{ await sb.from('prizes').insert({id:newPrize.id, child_id:child.id, label:newPrize.label, emoji:newPrize.emoji, cost:newPrize.cost, limit_max:newPrize.limitMax||null, limit_period:newPrize.limitPeriod||null}).throwOnError(); }catch(err){ handleSyncError(err); }
+    try{ await sb.from('prizes').insert({id:newPrize.id, child_id:child.id, label:newPrize.label, emoji:newPrize.emoji, cost:newPrize.cost, grants_minutes:newPrize.grantsMinutes||null, limit_max:newPrize.limitMax||null, limit_period:newPrize.limitPeriod||null}).throwOnError(); }catch(err){ handleSyncError(err); }
   };
 
   document.querySelectorAll('[data-edit-challenge]').forEach(b=>{
@@ -2067,7 +2091,13 @@ function historyItemRowHTML(e){
   else { amtClass='deny'; amtText=`${sign}${e.amount} ${cur} · denied`; }
   let subMeta = '';
   if(e.status==='approved' && e.kind==='redeem'){
-    subMeta = e.fulfilled ? '' : ` · <span style="color:var(--coral);">not delivered yet</span>`;
+    if(!e.fulfilled){
+      subMeta = ` · <span style="color:var(--coral);">not delivered yet</span>`;
+    } else if(e.grantsMinutes>0){
+      subMeta = (e.minutesUsed||0)>0
+        ? ` · ${e.minutesUsed} of ${e.grantsMinutes} min used`
+        : ` · +${e.grantsMinutes} min ready to use`;
+    }
   } else if(e.status==='approved' && e.currency==='minutes' && (e.minutesUsed||0)>0){
     subMeta = ` · ${e.minutesUsed} of ${e.amount} min used`;
   }
