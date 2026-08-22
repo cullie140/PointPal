@@ -14,12 +14,16 @@ const ICON_SET = [
 ];
 
 const DEFAULT_CHORES = [
-  { id:'dishes',   label:'Dishes',             emoji:'🍽️', points:5,  repeatable:false },
-  { id:'brush',    label:'Brush Teeth',        emoji:'🪥', points:5,  repeatable:false },
-  { id:'wipe',     label:'Wipe Butt',          emoji:'🧻', points:5,  repeatable:true  },
-  { id:'shower',   label:'Shower',             emoji:'🚿', points:10, repeatable:false },
-  { id:'dressed',  label:'Get Up & Dressed',   emoji:'👕', points:10, repeatable:false },
-  { id:'worksheet',label:'Worksheet',          emoji:'📝', points:1,  repeatable:true  },
+  { id:'dishes',   label:'Dishes',             emoji:'🍽️', amount:5,  currency:'points', repeatable:false },
+  { id:'brush',    label:'Brush Teeth',        emoji:'🪥', amount:5,  currency:'points', repeatable:false },
+  { id:'wipe',     label:'Wipe Butt',          emoji:'🧻', amount:5,  currency:'points', repeatable:true  },
+  { id:'shower',   label:'Shower',             emoji:'🚿', amount:10, currency:'points', repeatable:false },
+  { id:'dressed',  label:'Get Up & Dressed',   emoji:'👕', amount:10, currency:'points', repeatable:false },
+  { id:'worksheet',label:'Worksheet',          emoji:'📝', amount:1,  currency:'points', repeatable:true  },
+  { id:'school',   label:'Good Day at School', emoji:'🎒', amount:15, currency:'minutes',repeatable:false },
+];
+const DEFAULT_CHALLENGES = [
+  { id:'default-school', choreId:'school', label:'Good Day at School Streak', target:5, bonus:120, currency:'minutes', type:'recurring' }
 ];
 const DEFAULT_PRIZES = [
   { id:'p5min',    label:'5 Minutes Electronics',   emoji:'⏱️', cost:20,   grantsMinutes:5 },
@@ -38,7 +42,8 @@ function makeChild(id, name){
     weekStart: null,          // ISO date (Monday) this week's streak is counted against
     chores: structuredClone(DEFAULT_CHORES),
     prizes: structuredClone(DEFAULT_PRIZES),
-    entries: []                // {id, ts, kind:'chore'|'school'|'bonus'|'redeem', refId, label, emoji, currency:'points'|'minutes', amount, status:'pending'|'approved'|'denied', grantsMinutes?}
+    challenges: structuredClone(DEFAULT_CHALLENGES),
+    entries: []                // {id, ts, kind:'chore'|'bonus'|'redeem', refId, label, emoji, currency:'points'|'minutes', amount, status:'pending'|'approved'|'denied', grantsMinutes?}
   };
 }
 
@@ -70,50 +75,54 @@ function toEntryRow(entry, childId){
     status: entry.status, grants_minutes: entry.grantsMinutes || null
   };
 }
-function rowsToChild(childRow, chores, prizes, entries){
+function rowsToChild(childRow, chores, prizes, challenges, entries){
   return {
     id: childRow.id,
     name: childRow.name,
     points: childRow.points,
     minutes: childRow.minutes,
     weekStart: childRow.week_start,
-    chores: chores.filter(c=>c.child_id===childRow.id).map(c=>({id:c.id, label:c.label, emoji:c.emoji, points:c.points, repeatable:c.repeatable, schedule:c.schedule||undefined})),
+    chores: chores.filter(c=>c.child_id===childRow.id).map(c=>({id:c.id, label:c.label, emoji:c.emoji, amount:c.amount, currency:c.currency, repeatable:c.repeatable, schedule:c.schedule||undefined})),
     prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, grantsMinutes:p.grants_minutes||undefined})),
+    challenges: challenges.filter(ch=>ch.child_id===childRow.id).map(ch=>({id:ch.id, choreId:ch.chore_id, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, startDate:ch.start_date||undefined, endDate:ch.end_date||undefined})),
     entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status, grantsMinutes:e.grants_minutes||undefined}))
   };
 }
 async function insertChildFull(c){
   await sb.from('children').insert({id:c.id, name:c.name, points:c.points, minutes:c.minutes, week_start:c.weekStart}).throwOnError();
-  if(c.chores.length) await sb.from('chores').insert(c.chores.map(ch=>({id:ch.id, child_id:c.id, label:ch.label, emoji:ch.emoji, points:ch.points, repeatable:ch.repeatable, schedule:ch.schedule||null}))).throwOnError();
+  if(c.chores.length) await sb.from('chores').insert(c.chores.map(ch=>({id:ch.id, child_id:c.id, label:ch.label, emoji:ch.emoji, amount:ch.amount, currency:ch.currency, repeatable:ch.repeatable, schedule:ch.schedule||null}))).throwOnError();
   if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null}))).throwOnError();
+  if(c.challenges.length) await sb.from('challenges').insert(c.challenges.map(ch=>({id:ch.id, child_id:c.id, chore_id:ch.choreId, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, start_date:ch.startDate||null, end_date:ch.endDate||null}))).throwOnError();
 }
 
 async function fetchCloudState(){
-  const [childrenRes, choresRes, prizesRes, entriesRes, settingsRes] = await Promise.all([
+  const [childrenRes, choresRes, prizesRes, challengesRes, entriesRes, settingsRes] = await Promise.all([
     sb.from('children').select('*').order('created_at'),
     sb.from('chores').select('*'),
     sb.from('prizes').select('*'),
+    sb.from('challenges').select('*'),
     sb.from('entries').select('*'),
     sb.from('family_settings').select('*').maybeSingle()
   ]);
-  const firstError = childrenRes.error || choresRes.error || prizesRes.error || entriesRes.error || settingsRes.error;
+  const firstError = childrenRes.error || choresRes.error || prizesRes.error || challengesRes.error || entriesRes.error || settingsRes.error;
   if(firstError) throw firstError;
 
   let childRows = childrenRes.data;
-  let choreRows = choresRes.data, prizeRows = prizesRes.data;
+  let choreRows = choresRes.data, prizeRows = prizesRes.data, challengeRows = challengesRes.data;
   if(childRows.length===0){
     const fresh = makeChild(uid(), 'Champ');
     await insertChildFull(fresh);
     childRows = [{id:fresh.id, name:fresh.name, points:0, minutes:0, week_start:null}];
     choreRows = fresh.chores.map(c=>({...c, child_id:fresh.id}));
     prizeRows = fresh.prizes.map(p=>({...p, child_id:fresh.id, grants_minutes:p.grantsMinutes||null}));
+    challengeRows = fresh.challenges.map(ch=>({...ch, child_id:fresh.id, chore_id:ch.choreId, start_date:ch.startDate||null, end_date:ch.endDate||null}));
   }
 
   let pin = '1234';
   if(settingsRes.data){ pin = settingsRes.data.pin; }
   else { await sb.from('family_settings').insert({pin:'1234'}).throwOnError(); }
 
-  const children = childRows.map(cr => rowsToChild(cr, choreRows, prizeRows, entriesRes.data));
+  const children = childRows.map(cr => rowsToChild(cr, choreRows, prizeRows, challengeRows, entriesRes.data));
   return { pin, children };
 }
 
@@ -153,6 +162,7 @@ function subscribeRealtime(){
     .on('postgres_changes', {event:'*', schema:'public', table:'children', filter}, scheduleRefetch)
     .on('postgres_changes', {event:'*', schema:'public', table:'chores', filter}, scheduleRefetch)
     .on('postgres_changes', {event:'*', schema:'public', table:'prizes', filter}, scheduleRefetch)
+    .on('postgres_changes', {event:'*', schema:'public', table:'challenges', filter}, scheduleRefetch)
     .on('postgres_changes', {event:'*', schema:'public', table:'entries', filter}, scheduleRefetch)
     .subscribe((status)=>{
       if(status==='SUBSCRIBED'){ connectionOk = true; updateOfflineBanner(); }
@@ -165,8 +175,6 @@ function updateOfflineBanner(){
   if(banner) banner.classList.toggle('show', !connectionOk);
   const mc = document.getElementById('mainContent');
   if(mc) mc.classList.toggle('offline-locked', !connectionOk);
-  const schoolBtn = document.getElementById('schoolBtn');
-  if(schoolBtn) schoolBtn.classList.toggle('offline-locked', !connectionOk);
 }
 window.addEventListener('online', ()=>{ connectionOk = true; updateOfflineBanner(); if(state) scheduleRefetch(); });
 window.addEventListener('offline', ()=>{ connectionOk = false; updateOfflineBanner(); });
@@ -266,13 +274,34 @@ function entriesToday(c, kind, refId){
 function entriesForDay(c, dk){
   return c.entries.filter(e => dateKey(new Date(e.ts))===dk).sort((a,b)=>a.ts-b.ts);
 }
-function goodDaysThisWeekApproved(c){
-  const wk = c.weekStart;
-  return c.entries.filter(e => e.kind==='school' && e.status==='approved' && weekKeyFor(new Date(e.ts))===wk).length;
+/* ---------- challenges: recurring or date-bound bonus goals tied to a chore ---------- */
+function isChallengeActive(ch, dk){
+  return ch.type==='recurring' ? true : (dk>=ch.startDate && dk<=ch.endDate);
 }
-function bonusAlreadyGrantedThisWeek(c){
-  const wk = c.weekStart;
-  return c.entries.some(e => e.kind==='bonus' && weekKeyFor(new Date(e.ts))===wk);
+function challengeProgress(c, ch){
+  const inWindow = ch.type==='recurring'
+    ? e => weekKeyFor(new Date(e.ts))===c.weekStart
+    : e => { const d=dateKey(new Date(e.ts)); return d>=ch.startDate && d<=ch.endDate; };
+  return c.entries.filter(e=>e.kind==='chore' && e.refId===ch.choreId && e.status==='approved' && inWindow(e)).length;
+}
+function challengeBonusGranted(c, ch){
+  return ch.type==='recurring'
+    ? c.entries.some(e=>e.kind==='bonus' && e.refId===ch.id && weekKeyFor(new Date(e.ts))===c.weekStart)
+    : c.entries.some(e=>e.kind==='bonus' && e.refId===ch.id);
+}
+function maybeGrantChallengeBonus(c, ch, status){
+  if(!isChallengeActive(ch, todayKey())) return null;
+  if(challengeProgress(c, ch) < ch.target) return null;
+  if(challengeBonusGranted(c, ch)) return null;
+  const bonus = { id:uid(), ts:Date.now(), kind:'bonus', refId:ch.id, label:`${ch.label} Bonus!`, emoji:'🏆', currency:ch.currency, amount:ch.bonus, status };
+  c.entries.push(bonus);
+  if(status==='approved'){ if(ch.currency==='points') c.points+=ch.bonus; else c.minutes+=ch.bonus; }
+  return bonus;
+}
+function checkChallengesForApproval(c, entry, status){
+  if(entry.kind!=='chore') return [];
+  ensureWeek(c);
+  return (c.challenges||[]).filter(ch=>ch.choreId===entry.refId).map(ch=>maybeGrantChallengeBonus(c, ch, status)).filter(Boolean);
 }
 function pendingEntries(){
   const all = [];
@@ -311,23 +340,10 @@ async function requestChore(choreId, evt){
     const already = entriesToday(child, 'chore', choreId).some(e=>e.status!=='denied');
     if(already){ toast(`${chore.label} is already done for today! 🎉`); return; }
   }
-  const entry = { id:uid(), ts:Date.now(), kind:'chore', refId:choreId, label:chore.label, emoji:chore.emoji, currency:'points', amount:chore.points, status:'pending' };
+  const entry = { id:uid(), ts:Date.now(), kind:'chore', refId:choreId, label:chore.label, emoji:chore.emoji, currency:chore.currency, amount:chore.amount, status:'pending' };
   child.entries.push(entry);
-  spawnFloaterAt(evt, `+${chore.points} pts (pending)`, 'var(--gold-deep)');
+  spawnFloaterAt(evt, `+${chore.amount} ${chore.currency==='points'?'pts':'min'} (pending)`, 'var(--gold-deep)');
   toast(`Sent "${chore.label}" for approval ⏳`);
-  render();
-  try{ await sb.from('entries').insert(toEntryRow(entry, child.id)).throwOnError(); }catch(err){ handleSyncError(err); }
-}
-
-async function requestSchoolDay(evt){
-  if(!requireOnline()) return;
-  ensureWeek(child);
-  const already = entriesToday(child, 'school').some(e=>e.status!=='denied');
-  if(already){ toast('Already marked for today! 🌟'); return; }
-  const entry = { id:uid(), ts:Date.now(), kind:'school', refId:'school', label:'Good Day at School', emoji:'🎒', currency:'minutes', amount:15, status:'pending' };
-  child.entries.push(entry);
-  spawnFloaterAt(evt, `+15 min (pending)`, 'var(--gold-deep)');
-  toast('Sent for approval ⏳');
   render();
   try{ await sb.from('entries').insert(toEntryRow(entry, child.id)).throwOnError(); }catch(err){ handleSyncError(err); }
 }
@@ -337,39 +353,6 @@ function pastDateOrToast(dateStr){
   const d = new Date(dateStr+'T12:00:00');
   if(dateKey(d) > todayKey()){ toast('Pick today or an earlier date'); return null; }
   return d;
-}
-
-async function addPastSchoolDay(dateStr){
-  if(!requireOnline()) return;
-  const d = pastDateOrToast(dateStr);
-  if(!d) return;
-  const dk = dateKey(d);
-  const already = entriesForDay(child, dk).some(e=>e.kind==='school' && e.status!=='denied');
-  if(already){ toast('That day already has a school entry'); return; }
-
-  const schoolEntry = { id:uid(), ts:d.getTime(), kind:'school', refId:'school', label:'Good Day at School', emoji:'🎒', currency:'minutes', amount:15, status:'approved' };
-  child.entries.push(schoolEntry);
-  child.minutes += 15;
-
-  const wk = weekKeyFor(d);
-  const goodDays = child.entries.filter(e=>e.kind==='school' && e.status==='approved' && weekKeyFor(new Date(e.ts))===wk).length;
-  const bonusAlready = child.entries.some(e=>e.kind==='bonus' && weekKeyFor(new Date(e.ts))===wk);
-  let bonusEntry = null;
-  if(goodDays>=5 && !bonusAlready){
-    bonusEntry = { id:uid(), ts:d.getTime(), kind:'bonus', refId:'bonus', label:'5-Day Streak Bonus!', emoji:'🏆', currency:'minutes', amount:120, status:'approved' };
-    child.entries.push(bonusEntry);
-    child.minutes += 120;
-    toast('5 good days that week — bonus added! 🏆');
-  } else {
-    toast('Added a Good Day at School ✅');
-  }
-  renderParentBody(); render();
-
-  try{
-    await sb.from('entries').insert(toEntryRow(schoolEntry, child.id)).throwOnError();
-    if(bonusEntry) await sb.from('entries').insert(toEntryRow(bonusEntry, child.id)).throwOnError();
-    await sb.from('children').update({minutes: child.minutes}).eq('id', child.id).throwOnError();
-  }catch(err){ handleSyncError(err); }
 }
 
 async function addPastChore(choreId, dateStr){
@@ -383,14 +366,16 @@ async function addPastChore(choreId, dateStr){
     const already = entriesForDay(child, dk).some(e=>e.kind==='chore' && e.refId===choreId && e.status!=='denied');
     if(already){ toast(`${chore.label} already has an entry that day`); return; }
   }
-  const entry = { id:uid(), ts:d.getTime(), kind:'chore', refId:choreId, label:chore.label, emoji:chore.emoji, currency:'points', amount:chore.points, status:'approved' };
+  const entry = { id:uid(), ts:d.getTime(), kind:'chore', refId:choreId, label:chore.label, emoji:chore.emoji, currency:chore.currency, amount:chore.amount, status:'approved' };
   child.entries.push(entry);
-  child.points += chore.points;
-  toast(`Added "${chore.label}" ✅`);
+  if(chore.currency==='points') child.points += chore.amount; else child.minutes += chore.amount;
+  const bonuses = checkChallengesForApproval(child, entry, 'approved');
+  toast(bonuses.length ? `Added "${chore.label}" — bonus unlocked! 🏆` : `Added "${chore.label}" ✅`);
   renderParentBody(); render();
   try{
     await sb.from('entries').insert(toEntryRow(entry, child.id)).throwOnError();
-    await sb.from('children').update({points: child.points}).eq('id', child.id).throwOnError();
+    for(const b of bonuses) await sb.from('entries').insert(toEntryRow(b, child.id)).throwOnError();
+    await sb.from('children').update({points: child.points, minutes: child.minutes}).eq('id', child.id).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
 
@@ -443,7 +428,7 @@ async function approveEntry(id, opts){
   if(!(opts && opts.silent)) snapshotForUndo(`Approved "${e.label}"`, c, e, 'pending');
   e.status='approved';
 
-  if(e.kind==='chore' || e.kind==='school' || e.kind==='bonus'){
+  if(e.kind==='chore' || e.kind==='bonus'){
     if(e.currency==='points') c.points += e.amount;
     else c.minutes += e.amount;
     burstConfetti();
@@ -453,23 +438,17 @@ async function approveEntry(id, opts){
     burstConfetti();
   }
 
-  let newBonus = null;
-  if(e.kind==='school'){
-    ensureWeek(c);
-    const goodDays = goodDaysThisWeekApproved(c);
-    if(goodDays>=5 && !bonusAlreadyGrantedThisWeek(c)){
-      newBonus = { id:uid(), ts:Date.now(), kind:'bonus', refId:'bonus', label:'5-Day Streak Bonus!', emoji:'🏆', currency:'minutes', amount:120, status:'pending' };
-      c.entries.push(newBonus);
-      if(lastActionSnapshot) lastActionSnapshot.extraEntryId = newBonus.id;
-      toast('5 good days this week — bonus sent for approval! 🏆');
-    }
+  const newBonuses = checkChallengesForApproval(c, e, 'pending');
+  if(newBonuses.length){
+    if(lastActionSnapshot) newBonuses.forEach(b=>lastActionSnapshot.extraEntryIds.push(b.id));
+    toast(`"${e.label}" approved — a challenge bonus was sent for approval too! 🏆`);
   }
   render();
 
   try{
     await sb.from('entries').update({status:'approved'}).eq('id', id).throwOnError();
     await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id).throwOnError();
-    if(newBonus) await sb.from('entries').insert(toEntryRow(newBonus, c.id)).throwOnError();
+    for(const b of newBonuses) await sb.from('entries').insert(toEntryRow(b, c.id)).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
 
@@ -508,7 +487,7 @@ function snapshotForUndo(message, c, entry, prevStatus){
     prevStatus,
     points: c.points,
     minutes: c.minutes,
-    extraEntryId: null
+    extraEntryIds: []
   };
   showUndoToast(message);
 }
@@ -542,8 +521,8 @@ async function performUndo(){
 
   const entry = c.entries.find(e=>e.id===snap.entryId);
   if(entry) entry.status = snap.prevStatus;
-  if(snap.extraEntryId){
-    c.entries = c.entries.filter(e=>e.id!==snap.extraEntryId);
+  if(snap.extraEntryIds && snap.extraEntryIds.length){
+    c.entries = c.entries.filter(e=>!snap.extraEntryIds.includes(e.id));
   }
   c.points = snap.points;
   c.minutes = snap.minutes;
@@ -553,7 +532,7 @@ async function performUndo(){
 
   try{
     if(entry) await sb.from('entries').update({status: snap.prevStatus}).eq('id', snap.entryId).throwOnError();
-    if(snap.extraEntryId) await sb.from('entries').delete().eq('id', snap.extraEntryId).throwOnError();
+    for(const extraId of (snap.extraEntryIds||[])) await sb.from('entries').delete().eq('id', extraId).throwOnError();
     await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
@@ -716,6 +695,7 @@ function renderParentBody(){
   if(activeParentTab==='approve') body.innerHTML = parentApproveHTML();
   else if(activeParentTab==='chores') body.innerHTML = parentChoresHTML();
   else if(activeParentTab==='prizes') body.innerHTML = parentPrizesHTML();
+  else if(activeParentTab==='challenges') body.innerHTML = parentChallengesHTML();
   else body.innerHTML = parentSettingsHTML();
   wireParentBody();
 }
@@ -765,22 +745,51 @@ function parentChoresHTML(){
       <label style="display:flex; align-items:center; gap:5px; font-weight:700; font-size:12px; color:var(--ink-soft); white-space:nowrap;">
         <input type="checkbox" data-chore-repeat="${c.id}" ${c.repeatable?'checked':''}> Repeatable
       </label>
-      <input class="settings-input" type="number" min="0" data-chore-points="${c.id}" value="${c.points}">
+      <input class="settings-input" type="number" min="0" data-chore-amount="${c.id}" value="${c.amount}">
+      <button class="icon-btn-sm currency-toggle" data-chore-currency="${c.id}">${c.currency==='points'?'Pts':'Min'}</button>
       <button class="icon-btn-sm" data-chore-del="${c.id}">Remove</button>
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Editing <b>${child.name}</b>'s chores. Names, points, icons, and schedules all update live. Removing a chore doesn't erase past history.</div>
+    <div class="sheet-sub">Editing <b>${child.name}</b>'s chores. Names, amounts, icons, and schedules all update live. Removing a chore doesn't erase past history.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
       <button class="icon-swatch" id="newChoreIconBtn" style="margin-top:10px;">${pendingChoreIcon}</button>
       <input id="newChoreLabel" class="child-name-input" placeholder="New chore name" style="flex:1; margin-top:10px;">
       <button class="schedule-pill" id="newChoreScheduleBtn" style="margin-top:10px;">📅 ${scheduleSummaryText(pendingChoreSchedule)}</button>
-      <input id="newChorePoints" class="settings-input" type="number" placeholder="pts" style="margin-top:8px;">
+      <input id="newChoreAmount" class="settings-input" type="number" placeholder="amt" style="margin-top:8px;">
+      <button class="icon-btn-sm currency-toggle" id="newChoreCurrencyBtn" style="margin-top:8px;">${pendingChoreCurrency==='points'?'Pts':'Min'}</button>
       <label style="display:flex; align-items:center; gap:6px; font-weight:700; font-size:13px; margin-top:8px;">
         <input type="checkbox" id="newChoreRepeat"> Repeatable
       </label>
       <button class="btn btn-primary" id="addChoreBtn" style="margin-top:8px;">Add Chore</button>
+    </div>
+  `;
+}
+
+function parentChallengesHTML(){
+  const rows = (child.challenges||[]).map(ch=>{
+    const chore = child.chores.find(c=>c.id===ch.choreId);
+    const cur = ch.currency==='points' ? 'pts' : 'min';
+    const window = ch.type==='recurring' ? 'Weekly' : `${ch.startDate} → ${ch.endDate}`;
+    return `
+    <div class="list-edit-item">
+      <div style="flex:1 1 100%; display:flex; align-items:center; gap:10px;">
+        <div style="font-size:24px;">${chore ? chore.emoji : '🏆'}</div>
+        <div style="flex:1; min-width:0;">
+          <div style="font-weight:800; font-size:14px;">${ch.label}</div>
+          <div style="font-size:12px; color:var(--ink-soft); font-weight:700;">${chore ? chore.label : 'Unknown chore'} · ${ch.target}x · +${ch.bonus} ${cur} · ${window}</div>
+        </div>
+        <button class="icon-btn-sm" data-edit-challenge="${ch.id}">Edit</button>
+        <button class="icon-btn-sm" data-challenge-del="${ch.id}">Remove</button>
+      </div>
+    </div>`;
+  }).join('');
+  return `
+    <div class="sheet-sub">Challenges watch a chore's approvals and pay a bonus once the target is hit — recurring ones reset every week, one-time ones only run between the dates you set.</div>
+    ${rows || `<div class="empty-state"><div class="e">🏆</div>No challenges set up yet.</div>`}
+    <div class="add-row" style="margin-top:16px;">
+      <button class="btn btn-primary" id="addChallengeBtn" style="width:100%;">+ Add Challenge</button>
     </div>
   `;
 }
@@ -949,6 +958,102 @@ async function saveSchedule(){
   }
 }
 
+function openChallengePicker(ctx){
+  challengePickerContext = ctx;
+  const existing = ctx.type==='edit' ? child.challenges.find(c=>c.id===ctx.id) : null;
+  challengeDraft = structuredClone(existing || {
+    choreId: (child.chores[0]||{}).id, label:'', target:5, bonus:50, currency:'points', type:'recurring',
+    startDate: todayKey(), endDate: todayKey()
+  });
+  document.getElementById('challengePickerBody').innerHTML = challengeEditorHTML();
+  wireChallengeEditor();
+  document.getElementById('challengeOverlay').classList.add('show');
+}
+function closeChallengePicker(){
+  document.getElementById('challengeOverlay').classList.remove('show');
+  challengePickerContext = null;
+}
+
+function challengeEditorHTML(){
+  const choreOptions = child.chores.map(c=>`<option value="${c.id}" ${challengeDraft.choreId===c.id?'selected':''}>${c.emoji} ${c.label}</option>`).join('');
+  const currencyRow = `<div class="sched-type-row">
+    <button class="sched-type-btn ${challengeDraft.currency==='points'?'active':''}" data-chal-currency="points">Points</button>
+    <button class="sched-type-btn ${challengeDraft.currency==='minutes'?'active':''}" data-chal-currency="minutes">Minutes</button>
+  </div>`;
+  const typeRow = `<div class="sched-type-row">
+    <button class="sched-type-btn ${challengeDraft.type==='recurring'?'active':''}" data-chal-type="recurring">Recurring (weekly)</button>
+    <button class="sched-type-btn ${challengeDraft.type==='onetime'?'active':''}" data-chal-type="onetime">One-Time</button>
+  </div>`;
+  const dateRow = challengeDraft.type==='onetime' ? `
+    <div class="sched-sub-label">Starts</div>
+    <input type="date" id="chalStartDate" class="child-name-input" value="${challengeDraft.startDate}">
+    <div class="sched-sub-label">Ends</div>
+    <input type="date" id="chalEndDate" class="child-name-input" value="${challengeDraft.endDate}">
+  ` : `<div class="sheet-sub" style="margin-top:8px;">Resets every week, indefinitely — same as School's streak.</div>`;
+
+  return `
+    <div class="sched-sub-label">Which chore?</div>
+    <select id="chalChoreSelect" class="child-name-input">${choreOptions}</select>
+    <div class="sched-sub-label">Challenge name</div>
+    <input id="chalLabel" class="child-name-input" placeholder="e.g. Dishes Streak" value="${challengeDraft.label}">
+    <div class="sched-sub-label">Target count</div>
+    <input id="chalTarget" class="settings-input" type="number" min="1" value="${challengeDraft.target}" style="width:100%;">
+    <div class="sched-sub-label">Bonus amount</div>
+    <input id="chalBonus" class="settings-input" type="number" min="0" value="${challengeDraft.bonus}" style="width:100%;">
+    ${currencyRow}
+    <div class="sched-sub-label">Type</div>
+    ${typeRow}
+    ${dateRow}
+  `;
+}
+
+function wireChallengeEditor(){
+  const choreSelect = document.getElementById('chalChoreSelect');
+  if(choreSelect) choreSelect.onchange=()=>{ challengeDraft.choreId = choreSelect.value; };
+  const labelInp = document.getElementById('chalLabel');
+  if(labelInp) labelInp.oninput=()=>{ challengeDraft.label = labelInp.value; };
+  const targetInp = document.getElementById('chalTarget');
+  if(targetInp) targetInp.oninput=()=>{ challengeDraft.target = parseInt(targetInp.value)||1; };
+  const bonusInp = document.getElementById('chalBonus');
+  if(bonusInp) bonusInp.oninput=()=>{ challengeDraft.bonus = parseInt(bonusInp.value)||0; };
+  document.querySelectorAll('[data-chal-currency]').forEach(b=>{
+    b.onclick=()=>{ challengeDraft.currency = b.dataset.chalCurrency; document.getElementById('challengePickerBody').innerHTML = challengeEditorHTML(); wireChallengeEditor(); };
+  });
+  document.querySelectorAll('[data-chal-type]').forEach(b=>{
+    b.onclick=()=>{ challengeDraft.type = b.dataset.chalType; document.getElementById('challengePickerBody').innerHTML = challengeEditorHTML(); wireChallengeEditor(); };
+  });
+  const startInp = document.getElementById('chalStartDate');
+  if(startInp) startInp.onchange=()=>{ challengeDraft.startDate = startInp.value; };
+  const endInp = document.getElementById('chalEndDate');
+  if(endInp) endInp.onchange=()=>{ challengeDraft.endDate = endInp.value; };
+}
+
+async function saveChallenge(){
+  const ctx = challengePickerContext;
+  if(!ctx || !requireOnline()) return;
+  const chore = child.chores.find(c=>c.id===challengeDraft.choreId);
+  if(!chore) return;
+  const draft = structuredClone(challengeDraft);
+  if(!draft.label) draft.label = `${chore.label} Challenge`;
+  closeChallengePicker();
+  if(ctx.type==='new'){
+    const newChallenge = Object.assign({id:uid()}, draft);
+    child.challenges.push(newChallenge);
+    renderParentBody(); render();
+    try{
+      await sb.from('challenges').insert({id:newChallenge.id, child_id:child.id, chore_id:newChallenge.choreId, label:newChallenge.label, target:newChallenge.target, bonus:newChallenge.bonus, currency:newChallenge.currency, type:newChallenge.type, start_date:newChallenge.startDate||null, end_date:newChallenge.endDate||null}).throwOnError();
+    }catch(err){ handleSyncError(err); }
+  } else {
+    const c = child.challenges.find(x=>x.id===ctx.id);
+    if(!c) return;
+    Object.assign(c, draft);
+    renderParentBody(); render();
+    try{
+      await sb.from('challenges').update({chore_id:c.choreId, label:c.label, target:c.target, bonus:c.bonus, currency:c.currency, type:c.type, start_date:c.startDate||null, end_date:c.endDate||null}).eq('id', c.id).throwOnError();
+    }catch(err){ handleSyncError(err); }
+  }
+}
+
 function parentSettingsHTML(){
   const tabs = `
     <div class="subtab-row">
@@ -1013,7 +1118,6 @@ function settingsPointsHTML(){
 }
 
 function settingsManualHTML(){
-  if(manualEntryType==='school') return manualSchoolFormHTML();
   if(manualEntryType==='chore') return manualChoreFormHTML();
   if(manualEntryType==='prize') return manualPrizeFormHTML();
   return settingsManualMenuHTML();
@@ -1023,14 +1127,6 @@ function settingsManualMenuHTML(){
   return `
     <div class="sheet-sub" style="margin-bottom:12px;">Add something that already happened, dated in the past. These apply right away — no approval needed.</div>
     <div class="manual-grid">
-      <button class="manual-tile mt-school" data-manual-open="school">
-        <div class="manual-tile-ic">🎒</div>
-        <div class="manual-tile-text">
-          <div class="manual-tile-lbl">School Day</div>
-          <div class="manual-tile-sub">Backfill a missed day</div>
-        </div>
-        <div class="manual-tile-chev">›</div>
-      </button>
       <button class="manual-tile mt-chore" data-manual-open="chore">
         <div class="manual-tile-ic">✅</div>
         <div class="manual-tile-text">
@@ -1055,24 +1151,12 @@ function manualBackHTML(){
   return `<button class="icon-btn-sm" id="manualBackBtn" style="margin-bottom:16px;">‹ Back</button>`;
 }
 
-function manualSchoolFormHTML(){
-  return `
-    ${manualBackHTML()}
-    <div class="settings-label" style="margin-bottom:4px;">Add a missed school day</div>
-    <div class="sheet-sub" style="margin-bottom:8px;">For <b>${child.name}</b>. Counts toward that week's streak and can trigger the 5-day bonus.</div>
-    <div class="add-row" style="flex-wrap:wrap;">
-      <input type="date" id="missedSchoolDate" class="child-name-input" style="flex:1 1 100%;" max="${todayKey()}">
-      <button class="btn btn-primary" id="addMissedSchoolBtn" style="margin-top:8px;">Add Missed Day</button>
-    </div>
-  `;
-}
-
 function manualChoreFormHTML(){
-  const choreOptions = child.chores.map(c=>`<option value="${c.id}">${c.emoji} ${c.label} (+${c.points} pts)</option>`).join('');
+  const choreOptions = child.chores.map(c=>`<option value="${c.id}">${c.emoji} ${c.label} (+${c.amount} ${c.currency==='points'?'pts':'min'})</option>`).join('');
   return `
     ${manualBackHTML()}
     <div class="settings-label" style="margin-bottom:4px;">Add a chore completion</div>
-    <div class="sheet-sub" style="margin-bottom:8px;">For <b>${child.name}</b>. Credits points immediately — no approval needed.</div>
+    <div class="sheet-sub" style="margin-bottom:8px;">For <b>${child.name}</b>. Credits points or minutes immediately, and checks any matching challenge — no approval needed.</div>
     ${child.chores.length===0 ? `<div class="sheet-sub">No chores set up yet.</div>` : `
     <div class="add-row" style="flex-wrap:wrap;">
       <select id="manualChoreSelect" class="child-name-input" style="flex:1 1 100%;">${choreOptions}</select>
@@ -1123,12 +1207,21 @@ function wireParentBody(){
       } else { inp.value = c.label; }
     };
   });
-  document.querySelectorAll('[data-chore-points]').forEach(inp=>{
+  document.querySelectorAll('[data-chore-amount]').forEach(inp=>{
     inp.onchange=async ()=>{
-      const c = child.chores.find(x=>x.id===inp.dataset.chorePoints);
+      const c = child.chores.find(x=>x.id===inp.dataset.choreAmount);
       if(!c || !requireOnline()) return;
-      c.points = parseInt(inp.value)||0;
-      try{ await sb.from('chores').update({points:c.points}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
+      c.amount = parseInt(inp.value)||0;
+      try{ await sb.from('chores').update({amount:c.amount}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
+    };
+  });
+  document.querySelectorAll('[data-chore-currency]').forEach(b=>{
+    b.onclick=async ()=>{
+      const c = child.chores.find(x=>x.id===b.dataset.choreCurrency);
+      if(!c || !requireOnline()) return;
+      c.currency = c.currency==='points' ? 'minutes' : 'points';
+      renderParentBody(); render();
+      try{ await sb.from('chores').update({currency:c.currency}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
   document.querySelectorAll('[data-chore-repeat]').forEach(inp=>{
@@ -1159,19 +1252,25 @@ function wireParentBody(){
   });
   const newChoreScheduleBtn = document.getElementById('newChoreScheduleBtn');
   if(newChoreScheduleBtn) newChoreScheduleBtn.onclick=()=>openSchedulePicker({type:'newChore'});
+  const newChoreCurrencyBtn = document.getElementById('newChoreCurrencyBtn');
+  if(newChoreCurrencyBtn) newChoreCurrencyBtn.onclick=()=>{
+    pendingChoreCurrency = pendingChoreCurrency==='points' ? 'minutes' : 'points';
+    newChoreCurrencyBtn.textContent = pendingChoreCurrency==='points' ? 'Pts' : 'Min';
+  };
   const addChoreBtn = document.getElementById('addChoreBtn');
   if(addChoreBtn) addChoreBtn.onclick=async ()=>{
     if(!requireOnline()) return;
     const label = document.getElementById('newChoreLabel').value.trim();
-    const pts = parseInt(document.getElementById('newChorePoints').value)||0;
+    const amount = parseInt(document.getElementById('newChoreAmount').value)||0;
     const rep = document.getElementById('newChoreRepeat').checked;
     if(!label) return;
-    const newChore = {id:uid(), label, emoji:pendingChoreIcon, points:pts, repeatable:rep, schedule:pendingChoreSchedule};
+    const newChore = {id:uid(), label, emoji:pendingChoreIcon, amount, currency:pendingChoreCurrency, repeatable:rep, schedule:pendingChoreSchedule};
     child.chores.push(newChore);
     pendingChoreIcon = '⭐';
     pendingChoreSchedule = {type:'daily'};
+    pendingChoreCurrency = 'points';
     renderParentBody(); render();
-    try{ await sb.from('chores').insert({id:newChore.id, child_id:child.id, label:newChore.label, emoji:newChore.emoji, points:newChore.points, repeatable:newChore.repeatable, schedule:newChore.schedule}).throwOnError(); }catch(err){ handleSyncError(err); }
+    try{ await sb.from('chores').insert({id:newChore.id, child_id:child.id, label:newChore.label, emoji:newChore.emoji, amount:newChore.amount, currency:newChore.currency, repeatable:newChore.repeatable, schedule:newChore.schedule}).throwOnError(); }catch(err){ handleSyncError(err); }
   };
 
   document.querySelectorAll('[data-prize-label]').forEach(inp=>{
@@ -1231,6 +1330,24 @@ function wireParentBody(){
     try{ await sb.from('prizes').insert({id:newPrize.id, child_id:child.id, label:newPrize.label, emoji:newPrize.emoji, cost:newPrize.cost, grants_minutes:newPrize.grantsMinutes||null}).throwOnError(); }catch(err){ handleSyncError(err); }
   };
 
+  document.querySelectorAll('[data-edit-challenge]').forEach(b=>{
+    b.onclick=()=>openChallengePicker({type:'edit', id:b.dataset.editChallenge});
+  });
+  document.querySelectorAll('[data-challenge-del]').forEach(b=>{
+    b.onclick=async ()=>{
+      if(!requireOnline()) return;
+      const id = b.dataset.challengeDel;
+      child.challenges = child.challenges.filter(c=>c.id!==id);
+      renderParentBody(); render();
+      try{ await sb.from('challenges').delete().eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
+    };
+  });
+  const addChallengeBtn = document.getElementById('addChallengeBtn');
+  if(addChallengeBtn) addChallengeBtn.onclick=()=>{
+    if(child.chores.length===0){ toast('Add a chore first'); return; }
+    openChallengePicker({type:'new'});
+  };
+
   document.querySelectorAll('[data-adjust]').forEach(b=>{
     b.onclick=async ()=>{
       if(!requireOnline()) return;
@@ -1250,10 +1367,6 @@ function wireParentBody(){
   const manualBackBtn = document.getElementById('manualBackBtn');
   if(manualBackBtn) manualBackBtn.onclick=()=>{ manualEntryType = null; renderParentBody(); };
 
-  const addMissedSchoolBtn = document.getElementById('addMissedSchoolBtn');
-  if(addMissedSchoolBtn) addMissedSchoolBtn.onclick=()=>{
-    addPastSchoolDay(document.getElementById('missedSchoolDate').value);
-  };
   const addManualChoreBtn = document.getElementById('addManualChoreBtn');
   if(addManualChoreBtn) addManualChoreBtn.onclick=()=>{
     addPastChore(document.getElementById('manualChoreSelect').value, document.getElementById('manualChoreDate').value);
@@ -1333,9 +1446,11 @@ function wireParentBody(){
         await sb.from('entries').delete().eq('child_id', fresh.id).throwOnError();
         await sb.from('chores').delete().eq('child_id', fresh.id).throwOnError();
         await sb.from('prizes').delete().eq('child_id', fresh.id).throwOnError();
+        await sb.from('challenges').delete().eq('child_id', fresh.id).throwOnError();
         await sb.from('children').update({points:0, minutes:0, week_start: fresh.weekStart}).eq('id', fresh.id).throwOnError();
-        await sb.from('chores').insert(fresh.chores.map(c=>({id:c.id, child_id:fresh.id, label:c.label, emoji:c.emoji, points:c.points, repeatable:c.repeatable, schedule:c.schedule||null}))).throwOnError();
+        await sb.from('chores').insert(fresh.chores.map(c=>({id:c.id, child_id:fresh.id, label:c.label, emoji:c.emoji, amount:c.amount, currency:c.currency, repeatable:c.repeatable, schedule:c.schedule||null}))).throwOnError();
         await sb.from('prizes').insert(fresh.prizes.map(p=>({id:p.id, child_id:fresh.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null}))).throwOnError();
+        await sb.from('challenges').insert(fresh.challenges.map(ch=>({id:ch.id, child_id:fresh.id, chore_id:ch.choreId, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, start_date:ch.startDate||null, end_date:ch.endDate||null}))).throwOnError();
       }catch(err){ handleSyncError(err); }
     }
   };
@@ -1386,12 +1501,32 @@ function renderChildSwitcher(){
   });
 }
 
-function homeHTML(){
-  const schoolToday = entriesToday(child, 'school')[0];
-  const schoolStatus = schoolToday ? schoolToday.status : null;
-  const goodDays = goodDaysThisWeekApproved(child);
-  const streakDots = Array.from({length:5}).map((_,i)=>`<div class="streak-dot ${i<goodDays?'filled':''}"></div>`).join('');
+function activeChallengesHTML(){
+  const active = (child.challenges||[]).filter(ch=>isChallengeActive(ch, todayKey()));
+  if(!active.length) return '';
+  const cards = active.map(ch=>{
+    const chore = child.chores.find(c=>c.id===ch.choreId);
+    const progress = challengeProgress(child, ch);
+    const done = progress>=ch.target;
+    const cur = ch.currency==='points' ? 'pts' : 'min';
+    const daysHTML = ch.type==='onetime' ? `<div class="challenge-days">ends ${ch.endDate}</div>` : '';
+    return `
+      <div class="challenge-card ${done?'done':''}">
+        <div class="challenge-emoji">${chore ? chore.emoji : '🏆'}</div>
+        <div class="challenge-info">
+          <div class="challenge-title">${ch.label}</div>
+          <div class="challenge-progress">${progress}/${ch.target} · +${ch.bonus} ${cur}${done?' ✓':''}</div>
+        </div>
+        ${daysHTML}
+      </div>`;
+  }).join('');
+  return `
+    <div class="section-title">Active Challenges</div>
+    <div class="challenge-list">${cards}</div>
+  `;
+}
 
+function homeHTML(){
   const choreCards = child.chores.filter(isChoreVisibleToday).map(c=>{
     const todays = entriesToday(child, 'chore', c.id);
     const approvedCount = todays.filter(e=>e.status==='approved').length;
@@ -1408,24 +1543,12 @@ function homeHTML(){
         ${statusHTML}
         <div class="chore-emoji">${c.emoji}</div>
         <div class="chore-label">${c.label}</div>
-        <div class="chore-points">+${c.points} pts</div>
+        <div class="chore-points">+${c.amount} ${c.currency==='points'?'pts':'min'}</div>
       </button>`;
   }).join('');
 
   return `
-    <div class="section-title">Today at School <span class="tag">${goodDays}/5 this week</span></div>
-    <div class="school-card ${schoolStatus||''}">
-      <div class="school-emoji">🎒</div>
-      <div class="school-text">
-        <div class="school-title">Good Day at School</div>
-        <div class="school-sub">${schoolStatus==='approved' ? '15 min added!' : schoolStatus==='pending' ? 'Waiting for approval...' : 'Tap when you had a good day'}</div>
-      </div>
-      <button class="school-btn ${schoolStatus||''}" id="schoolBtn" ${schoolStatus?'disabled':''}>
-        ${schoolStatus==='approved' ? '✓' : schoolStatus==='pending' ? '⏳' : '+'}
-      </button>
-    </div>
-    <div class="streak-row">${streakDots}</div>
-
+    ${activeChallengesHTML()}
     <div class="section-title">Today's Chores</div>
     <div class="grid">${choreCards}</div>
   `;
@@ -1584,8 +1707,6 @@ function wireMainContent(){
   document.querySelectorAll('[data-chore]').forEach(b=>{
     b.onclick=(ev)=>requestChore(b.dataset.chore, ev);
   });
-  const schoolBtn = document.getElementById('schoolBtn');
-  if(schoolBtn) schoolBtn.onclick=(ev)=>requestSchoolDay(ev);
   document.querySelectorAll('[data-prize]').forEach(b=>{
     b.onclick=(ev)=>requestPrize(b.dataset.prize, ev);
   });
@@ -1759,6 +1880,9 @@ document.getElementById('iconOverlay').addEventListener('click', (e)=>{ if(e.tar
 document.getElementById('scheduleClose').addEventListener('click', closeSchedulePicker);
 document.getElementById('scheduleOverlay').addEventListener('click', (e)=>{ if(e.target.id==='scheduleOverlay') closeSchedulePicker(); });
 document.getElementById('scheduleSaveBtn').addEventListener('click', saveSchedule);
+document.getElementById('challengeClose').addEventListener('click', closeChallengePicker);
+document.getElementById('challengeOverlay').addEventListener('click', (e)=>{ if(e.target.id==='challengeOverlay') closeChallengePicker(); });
+document.getElementById('challengeSaveBtn').addEventListener('click', saveChallenge);
 document.getElementById('undoToastBtn').addEventListener('click', performUndo);
 
 let view = 'home';
@@ -1771,11 +1895,14 @@ let historyMonthOffset = 0;   // 0 = this month, -1 = last month, ...
 let pendingChoreIcon = '⭐';
 let pendingPrizeIcon = '🎁';
 let pendingChoreSchedule = {type:'daily'};
+let pendingChoreCurrency = 'points';
 let iconPickerContext = null; // {type:'newChore'|'newPrize'|'editChore'|'editPrize', id?}
 let schedulePickerContext = null; // {type:'newChore'|'editChore', id?}
 let scheduleDraft = {type:'daily'};
+let challengePickerContext = null; // {type:'new'|'edit', id?}
+let challengeDraft = {type:'recurring'};
 let settingsTab = 'profile'; // 'profile' | 'points' | 'manual' | 'data'
-let manualEntryType = null; // null | 'school' | 'chore' | 'prize'
+let manualEntryType = null; // null | 'chore' | 'prize'
 
 boot();
 

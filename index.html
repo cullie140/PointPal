@@ -153,31 +153,19 @@
     background:var(--bg); padding:2px 8px; border-radius:20px;
   }
 
-  .school-card{
+  .challenge-list{display:flex; flex-direction:column; gap:10px;}
+  .challenge-card{
     background: linear-gradient(135deg, #FFE9D6 0%, var(--sand) 100%);
-    border-radius:var(--radius-md); padding:18px; box-shadow:var(--shadow-sm);
+    border-radius:var(--radius-md); padding:14px 16px; box-shadow:var(--shadow-sm);
     display:flex; align-items:center; gap:14px;
     border:2px solid transparent;
   }
-  .school-card.done{border-color:var(--success);}
-  .school-card.pending{border-color:var(--gold);}
-  .school-emoji{font-size:36px;}
-  .school-text{flex:1;}
-  .school-title{font-weight:800; font-size:16px;}
-  .school-sub{font-size:12.5px; color:var(--ink-soft); font-weight:700; margin-top:2px;}
-  .school-btn{
-    width:52px; height:52px; border-radius:50%; border:none;
-    background:var(--coral); color:#fff; font-size:24px; font-weight:900;
-    display:flex; align-items:center; justify-content:center; box-shadow:0 4px 10px rgba(255,107,74,.4);
-  }
-  .school-btn.done{background:var(--success); box-shadow:0 4px 10px rgba(52,199,89,.4);}
-  .school-btn.pending{background:var(--gold);}
-
-  .streak-row{display:flex; gap:6px; margin-top:12px;}
-  .streak-dot{
-    flex:1; height:8px; border-radius:6px; background:rgba(255,255,255,.5);
-  }
-  .streak-dot.filled{background:var(--coral);}
+  .challenge-card.done{border-color:var(--success);}
+  .challenge-emoji{font-size:30px; flex-shrink:0;}
+  .challenge-info{flex:1; min-width:0;}
+  .challenge-title{font-weight:800; font-size:14.5px; color:var(--ink);}
+  .challenge-progress{font-size:12.5px; color:var(--ink-soft); font-weight:700; margin-top:2px;}
+  .challenge-days{font-size:11px; font-weight:800; color:var(--ink-soft); white-space:nowrap;}
 
   /* PRIZES */
   .prize-list{display:flex; flex-direction:column; gap:12px;}
@@ -474,7 +462,6 @@
   .manual-tile-lbl{font-weight:800; font-size:17px; color:var(--ink);}
   .manual-tile-sub{font-weight:700; font-size:12.5px; color:var(--ink-soft); margin-top:2px;}
   .manual-tile-chev{font-size:24px; font-weight:800; color:var(--ink-soft); flex-shrink:0;}
-  .manual-tile.mt-school{background:linear-gradient(135deg, #FFE9D6 0%, var(--sand) 100%);}
   .manual-tile.mt-chore{background:linear-gradient(135deg, #E3F7F4 0%, #C9EFE8 100%);}
   .manual-tile.mt-prize{background:linear-gradient(135deg, #FFE3DC 0%, #FFD2C4 100%);}
 
@@ -519,7 +506,7 @@
     transform:translateY(-100%); transition:transform 200ms ease;
   }
   .offline-banner.show{transform:translateY(0);}
-  .content.offline-locked, .school-btn.offline-locked{pointer-events:none; opacity:.55;}
+  .content.offline-locked{pointer-events:none; opacity:.55;}
 
   /* ---------- TABLET (portrait ~800px, landscape ~1280px on a 10.1in 1280x800 device) ---------- */
   @media (min-width:700px){
@@ -602,6 +589,7 @@
       <button class="tab-btn active" data-ptab="approve">Approvals</button>
       <button class="tab-btn" data-ptab="chores">Chores</button>
       <button class="tab-btn" data-ptab="prizes">Prizes</button>
+      <button class="tab-btn" data-ptab="challenges">Challenges</button>
       <button class="tab-btn" data-ptab="settings">Settings</button>
     </div>
     <div id="parentBody"></div>
@@ -637,6 +625,17 @@
     <div id="schedulePickerBody"></div>
     <button class="btn btn-primary" id="scheduleSaveBtn" style="margin-top:14px;">Save Schedule</button>
     <button class="btn btn-ghost" id="scheduleClose">Close</button>
+  </div>
+</div>
+
+<!-- CHALLENGE PICKER OVERLAY -->
+<div class="overlay" id="challengeOverlay">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Challenge</div>
+    <div id="challengePickerBody"></div>
+    <button class="btn btn-primary" id="challengeSaveBtn" style="margin-top:14px;">Save Challenge</button>
+    <button class="btn btn-ghost" id="challengeClose">Close</button>
   </div>
 </div>
 
