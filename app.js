@@ -26,7 +26,7 @@ const DEFAULT_CHALLENGES = [
   { id:'default-school', choreId:'school', label:'Good Day at School Streak', target:5, bonus:120, currency:'minutes', type:'recurring' }
 ];
 const DEFAULT_PRIZES = [
-  { id:'p5min',    label:'5 Minutes Electronics',   emoji:'⏱️', cost:20,   grantsMinutes:5 },
+  { id:'p5min',    label:'5 Minutes Electronics',   emoji:'⏱️', cost:20 },
   { id:'treat',    label:'Extra Treat or Dessert',  emoji:'🍪', cost:100 },
   { id:'icecream', label:'Go Out for Ice Cream',    emoji:'🍦', cost:250 },
   { id:'toy',      label:'$5–$10 Toy',              emoji:'🧸', cost:250 },
@@ -45,7 +45,7 @@ function makeChild(id, name){
     prizes: structuredClone(DEFAULT_PRIZES),
     challenges: structuredClone(DEFAULT_CHALLENGES),
     punishments: [],            // {id, label, blockPoints, blockMinutes, blockPrizes, endsAt}
-    entries: []                // {id, ts, kind:'chore'|'bonus'|'redeem', refId, label, emoji, currency:'points'|'minutes', amount, status:'pending'|'approved'|'denied', grantsMinutes?}
+    entries: []                // {id, ts, kind:'chore'|'bonus'|'redeem', refId, label, emoji, currency:'points'|'minutes', amount, status:'pending'|'approved'|'denied'}
   };
 }
 
@@ -74,7 +74,7 @@ function toEntryRow(entry, childId){
   return {
     id: entry.id, child_id: childId, ts: entry.ts, kind: entry.kind, ref_id: entry.refId || null,
     label: entry.label, emoji: entry.emoji, currency: entry.currency, amount: entry.amount,
-    status: entry.status, grants_minutes: entry.grantsMinutes || null
+    status: entry.status
   };
 }
 function rowsToChild(childRow, chores, prizes, challenges, punishments, entries){
@@ -86,16 +86,16 @@ function rowsToChild(childRow, chores, prizes, challenges, punishments, entries)
     weekStart: childRow.week_start,
     goalPrizeId: childRow.goal_prize_id || null,
     chores: chores.filter(c=>c.child_id===childRow.id).map(c=>({id:c.id, label:c.label, emoji:c.emoji, amount:c.amount, currency:c.currency, repeatable:c.repeatable, schedule:c.schedule||undefined})),
-    prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, grantsMinutes:p.grants_minutes||undefined, limitMax:p.limit_max||undefined, limitPeriod:p.limit_period||undefined})),
+    prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, limitMax:p.limit_max||undefined, limitPeriod:p.limit_period||undefined})),
     challenges: challenges.filter(ch=>ch.child_id===childRow.id).map(ch=>({id:ch.id, choreId:ch.chore_id, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, startDate:ch.start_date||undefined, endDate:ch.end_date||undefined})),
     punishments: punishments.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, blockPoints:p.block_points, blockMinutes:p.block_minutes, blockPrizes:p.block_prizes, endsAt:Number(p.ends_at)})),
-    entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status, grantsMinutes:e.grants_minutes||undefined}))
+    entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status}))
   };
 }
 async function insertChildFull(c){
   await sb.from('children').insert({id:c.id, name:c.name, points:c.points, minutes:c.minutes, week_start:c.weekStart}).throwOnError();
   if(c.chores.length) await sb.from('chores').insert(c.chores.map(ch=>({id:ch.id, child_id:c.id, label:ch.label, emoji:ch.emoji, amount:ch.amount, currency:ch.currency, repeatable:ch.repeatable, schedule:ch.schedule||null}))).throwOnError();
-  if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null, limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}))).throwOnError();
+  if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}))).throwOnError();
   if(c.challenges.length) await sb.from('challenges').insert(c.challenges.map(ch=>({id:ch.id, child_id:c.id, chore_id:ch.choreId, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, start_date:ch.startDate||null, end_date:ch.endDate||null}))).throwOnError();
   if(c.punishments.length) await sb.from('punishments').insert(c.punishments.map(p=>({id:p.id, child_id:c.id, label:p.label, block_points:p.blockPoints, block_minutes:p.blockMinutes, block_prizes:p.blockPrizes, ends_at:p.endsAt}))).throwOnError();
 }
@@ -120,7 +120,7 @@ async function fetchCloudState(){
     await insertChildFull(fresh);
     childRows = [{id:fresh.id, name:fresh.name, points:0, minutes:0, week_start:null}];
     choreRows = fresh.chores.map(c=>({...c, child_id:fresh.id}));
-    prizeRows = fresh.prizes.map(p=>({...p, child_id:fresh.id, grants_minutes:p.grantsMinutes||null}));
+    prizeRows = fresh.prizes.map(p=>({...p, child_id:fresh.id}));
     challengeRows = fresh.challenges.map(ch=>({...ch, child_id:fresh.id, chore_id:ch.choreId, start_date:ch.startDate||null, end_date:ch.endDate||null}));
     punishmentRows = [];
   }
@@ -256,6 +256,11 @@ function scheduleSummaryText(sched){
   if(sched.type==='biweekly') return `Every other ${DOW_ABBR[sched.day]}`;
   if(sched.type==='monthly') return `${WEEK_ORDINAL[sched.week]} ${DOW_ABBR[sched.day]}`;
   return 'Daily';
+}
+
+function limitSummaryText(limitMax, limitPeriod){
+  if(!limitMax) return 'No limit';
+  return `${limitMax}/${limitPeriod==='week'?'wk':'day'}`;
 }
 
 function scheduleMidnightRefresh(){
@@ -434,12 +439,10 @@ async function addPastPrizeRedemption(prizeId, dateStr){
   if(!d) return;
   const entry = {
     id:uid(), ts:d.getTime(), kind:'redeem', refId:prizeId,
-    label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'approved',
-    grantsMinutes: prize.grantsMinutes || 0
+    label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'approved'
   };
   child.entries.push(entry);
   child.points = Math.max(0, child.points - prize.cost);
-  if(prize.grantsMinutes) child.minutes += prize.grantsMinutes;
   toast(`Added "${prize.label}" redemption`);
   renderParentBody(); render();
   try{
@@ -458,8 +461,7 @@ async function requestPrize(prizeId, evt){
   if(already){ toast('Already waiting on approval for that one!'); return; }
   const entry = {
     id:uid(), ts:Date.now(), kind:'redeem', refId:prizeId,
-    label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'pending',
-    grantsMinutes: prize.grantsMinutes || 0
+    label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'pending'
   };
   child.entries.push(entry);
   spawnFloaterAt(evt, `Requested!`, 'var(--coral-deep)');
@@ -497,7 +499,6 @@ async function approveEntry(id, opts){
     burstConfetti();
   } else if(e.kind==='redeem'){
     c.points -= e.amount;
-    if(e.grantsMinutes) c.minutes += e.grantsMinutes;
     burstConfetti();
   }
 
@@ -790,7 +791,7 @@ function parentApproveHTML(){
         <div class="approval-label">${e.emoji} ${e.label}${multiChild?` <span class="child-tag">${e._childName}</span>`:''}</div>
         <div class="approval-amount">${sign}${e.amount} ${cur}</div>
       </div>
-      <div class="approval-meta">${timeAgo(e.ts)}${e.grantsMinutes?` · also grants ${e.grantsMinutes} min`:''}</div>
+      <div class="approval-meta">${timeAgo(e.ts)}</div>
       ${extra}
       <div class="approval-actions">
         <button class="btn btn-approve" data-approve="${e.id}">Approve</button>
@@ -888,23 +889,19 @@ function parentPrizesHTML(){
     <div class="list-edit-item">
       <button class="icon-swatch" data-edit-prize-icon="${p.id}">${p.emoji}</button>
       <input class="settings-input label-edit" data-prize-label="${p.id}" value="${p.label}">
-      <input class="settings-input" type="number" min="0" data-prize-minutes="${p.id}" value="${p.grantsMinutes||0}" title="Bonus minutes granted" style="width:56px;">
       <input class="settings-input" type="number" min="0" data-prize-cost="${p.id}" value="${p.cost}">
-      <input class="settings-input" type="number" min="0" data-prize-limit-max="${p.id}" value="${p.limitMax||''}" placeholder="limit" style="width:64px;" title="Max redemptions per period (blank = no limit)">
-      <button class="icon-btn-sm currency-toggle" data-prize-limit-period="${p.id}" title="Limit period">${p.limitPeriod==='week'?'/Wk':'/Day'}</button>
+      <button class="schedule-pill" data-edit-prize-limit="${p.id}">🔁 ${limitSummaryText(p.limitMax, p.limitPeriod)}</button>
       <button class="icon-btn-sm" data-prize-del="${p.id}">Remove</button>
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Editing <b>${child.name}</b>'s prizes. Names, costs, bonus minutes, and icons all update live. Set a redemption limit to cap how often a prize can be redeemed per day or week — leave it blank for no limit.</div>
+    <div class="sheet-sub">Editing <b>${child.name}</b>'s prizes. Names, costs, and icons all update live. The 🔁 pill sets an optional redemption limit — cap how often a prize can be redeemed per day or week.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
       <button class="icon-swatch" id="newPrizeIconBtn" style="margin-top:10px;">${pendingPrizeIcon}</button>
       <input id="newPrizeLabel" class="child-name-input" placeholder="New prize name" style="flex:1; margin-top:10px;">
       <input id="newPrizeCost" class="settings-input" type="number" placeholder="cost" style="margin-top:8px;">
-      <input id="newPrizeMinutes" class="settings-input" type="number" placeholder="min" style="margin-top:8px;" title="Minutes granted (optional)">
-      <input id="newPrizeLimitMax" class="settings-input" type="number" placeholder="limit" style="margin-top:8px;" title="Max redemptions per period (optional)">
-      <button class="icon-btn-sm currency-toggle" id="newPrizeLimitPeriodBtn" style="margin-top:8px;">${pendingPrizeLimitPeriod==='week'?'/Wk':'/Day'}</button>
+      <button class="schedule-pill" id="newPrizeLimitBtn" style="margin-top:8px;">🔁 ${limitSummaryText(pendingPrizeLimit.max, pendingPrizeLimit.period)}</button>
       <button class="btn btn-primary" id="addPrizeBtn" style="margin-top:8px;">Add Prize</button>
     </div>
   `;
@@ -1229,6 +1226,69 @@ async function savePunishment(){
   }
 }
 
+function openLimitPicker(ctx){
+  limitPickerContext = ctx;
+  let max, period;
+  if(ctx.type==='newPrize'){ max = pendingPrizeLimit.max; period = pendingPrizeLimit.period; }
+  else { const p = child.prizes.find(x=>x.id===ctx.id); max = p ? p.limitMax : undefined; period = p ? p.limitPeriod : undefined; }
+  limitDraft = { enabled: !!max, max: max||1, period: period||'day' };
+  document.getElementById('limitPickerBody').innerHTML = limitEditorHTML();
+  wireLimitEditor();
+  document.getElementById('limitOverlay').classList.add('show');
+}
+function closeLimitPicker(){
+  document.getElementById('limitOverlay').classList.remove('show');
+  limitPickerContext = null;
+}
+
+function limitEditorHTML(){
+  const enabledRow = `<div class="sched-type-row">
+    <button class="sched-type-btn ${!limitDraft.enabled?'active':''}" data-lim-enabled="off">No Limit</button>
+    <button class="sched-type-btn ${limitDraft.enabled?'active':''}" data-lim-enabled="on">Limited</button>
+  </div>`;
+  const detail = limitDraft.enabled ? `
+    <div class="sched-sub-label">Max redemptions</div>
+    <input id="limMax" class="settings-input" type="number" min="1" value="${limitDraft.max}" style="width:100%;">
+    <div class="sched-sub-label">Per</div>
+    <div class="sched-type-row">
+      <button class="sched-type-btn ${limitDraft.period==='day'?'active':''}" data-lim-period="day">Day</button>
+      <button class="sched-type-btn ${limitDraft.period==='week'?'active':''}" data-lim-period="week">Week</button>
+    </div>
+  ` : `<div class="sheet-sub" style="margin-top:8px;">This prize can be redeemed as often as it's affordable — no cap.</div>`;
+  return `${enabledRow}${detail}`;
+}
+
+function wireLimitEditor(){
+  document.querySelectorAll('[data-lim-enabled]').forEach(b=>{
+    b.onclick=()=>{ limitDraft.enabled = b.dataset.limEnabled==='on'; document.getElementById('limitPickerBody').innerHTML = limitEditorHTML(); wireLimitEditor(); };
+  });
+  document.querySelectorAll('[data-lim-period]').forEach(b=>{
+    b.onclick=()=>{ limitDraft.period = b.dataset.limPeriod; document.getElementById('limitPickerBody').innerHTML = limitEditorHTML(); wireLimitEditor(); };
+  });
+  const maxInp = document.getElementById('limMax');
+  if(maxInp) maxInp.oninput=()=>{ limitDraft.max = parseInt(maxInp.value)||1; };
+}
+
+async function saveLimit(){
+  const ctx = limitPickerContext;
+  if(!ctx) return;
+  const max = limitDraft.enabled ? (limitDraft.max||1) : undefined;
+  const period = limitDraft.enabled ? limitDraft.period : undefined;
+  closeLimitPicker();
+  if(ctx.type==='newPrize'){
+    pendingPrizeLimit = { max, period };
+    const btn = document.getElementById('newPrizeLimitBtn');
+    if(btn) btn.textContent = `🔁 ${limitSummaryText(max, period)}`;
+    return;
+  }
+  if(!requireOnline()) return;
+  const p = child.prizes.find(x=>x.id===ctx.id);
+  if(!p) return;
+  p.limitMax = max; p.limitPeriod = period;
+  renderParentBody(); render();
+  try{ await sb.from('prizes').update({limit_max:max||null, limit_period:period||null}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
+}
+
 function parentSettingsHTML(){
   const tabs = `
     <div class="subtab-row">
@@ -1460,15 +1520,6 @@ function wireParentBody(){
       } else { inp.value = p.label; }
     };
   });
-  document.querySelectorAll('[data-prize-minutes]').forEach(inp=>{
-    inp.onchange=async ()=>{
-      const p = child.prizes.find(x=>x.id===inp.dataset.prizeMinutes);
-      if(!p || !requireOnline()) return;
-      const mins = parseInt(inp.value);
-      p.grantsMinutes = mins > 0 ? mins : undefined;
-      try{ await sb.from('prizes').update({grants_minutes: mins > 0 ? mins : null}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
-    };
-  });
   document.querySelectorAll('[data-prize-cost]').forEach(inp=>{
     inp.onchange=async ()=>{
       const p = child.prizes.find(x=>x.id===inp.dataset.prizeCost);
@@ -1477,26 +1528,8 @@ function wireParentBody(){
       try{ await sb.from('prizes').update({cost:p.cost}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
-  document.querySelectorAll('[data-prize-limit-max]').forEach(inp=>{
-    inp.onchange=async ()=>{
-      const p = child.prizes.find(x=>x.id===inp.dataset.prizeLimitMax);
-      if(!p || !requireOnline()) return;
-      const val = parseInt(inp.value);
-      p.limitMax = val>0 ? val : undefined;
-      if(p.limitMax && !p.limitPeriod) p.limitPeriod = 'day';
-      render();
-      try{ await sb.from('prizes').update({limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
-    };
-  });
-  document.querySelectorAll('[data-prize-limit-period]').forEach(b=>{
-    b.onclick=async ()=>{
-      const p = child.prizes.find(x=>x.id===b.dataset.prizeLimitPeriod);
-      if(!p || !requireOnline()) return;
-      p.limitPeriod = p.limitPeriod==='week' ? 'day' : 'week';
-      b.textContent = p.limitPeriod==='week' ? '/Wk' : '/Day';
-      render();
-      try{ await sb.from('prizes').update({limit_period:p.limitPeriod}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
-    };
+  document.querySelectorAll('[data-edit-prize-limit]').forEach(b=>{
+    b.onclick=()=>openLimitPicker({type:'edit', id:b.dataset.editPrizeLimit});
   });
   document.querySelectorAll('[data-prize-del]').forEach(b=>{
     b.onclick=async ()=>{
@@ -1512,25 +1545,20 @@ function wireParentBody(){
   });
   const newPrizeIconBtn = document.getElementById('newPrizeIconBtn');
   if(newPrizeIconBtn) newPrizeIconBtn.onclick=()=>openIconPicker({type:'newPrize'});
-  const newPrizeLimitPeriodBtn = document.getElementById('newPrizeLimitPeriodBtn');
-  if(newPrizeLimitPeriodBtn) newPrizeLimitPeriodBtn.onclick=()=>{
-    pendingPrizeLimitPeriod = pendingPrizeLimitPeriod==='week' ? 'day' : 'week';
-    newPrizeLimitPeriodBtn.textContent = pendingPrizeLimitPeriod==='week' ? '/Wk' : '/Day';
-  };
+  const newPrizeLimitBtn = document.getElementById('newPrizeLimitBtn');
+  if(newPrizeLimitBtn) newPrizeLimitBtn.onclick=()=>openLimitPicker({type:'newPrize'});
   const addPrizeBtn = document.getElementById('addPrizeBtn');
   if(addPrizeBtn) addPrizeBtn.onclick=async ()=>{
     if(!requireOnline()) return;
     const label = document.getElementById('newPrizeLabel').value.trim();
     const cost = parseInt(document.getElementById('newPrizeCost').value)||0;
-    const mins = parseInt(document.getElementById('newPrizeMinutes').value)||0;
-    const limitMax = parseInt(document.getElementById('newPrizeLimitMax').value)||0;
     if(!label) return;
-    const newPrize = {id:uid(), label, emoji:pendingPrizeIcon, cost, grantsMinutes:mins||undefined, limitMax:limitMax>0?limitMax:undefined, limitPeriod:limitMax>0?pendingPrizeLimitPeriod:undefined};
+    const newPrize = {id:uid(), label, emoji:pendingPrizeIcon, cost, limitMax:pendingPrizeLimit.max, limitPeriod:pendingPrizeLimit.period};
     child.prizes.push(newPrize);
     pendingPrizeIcon = '🎁';
-    pendingPrizeLimitPeriod = 'day';
+    pendingPrizeLimit = {max:undefined, period:'day'};
     renderParentBody(); render();
-    try{ await sb.from('prizes').insert({id:newPrize.id, child_id:child.id, label:newPrize.label, emoji:newPrize.emoji, cost:newPrize.cost, grants_minutes:newPrize.grantsMinutes||null, limit_max:newPrize.limitMax||null, limit_period:newPrize.limitPeriod||null}).throwOnError(); }catch(err){ handleSyncError(err); }
+    try{ await sb.from('prizes').insert({id:newPrize.id, child_id:child.id, label:newPrize.label, emoji:newPrize.emoji, cost:newPrize.cost, limit_max:newPrize.limitMax||null, limit_period:newPrize.limitPeriod||null}).throwOnError(); }catch(err){ handleSyncError(err); }
   };
 
   document.querySelectorAll('[data-edit-challenge]').forEach(b=>{
@@ -1668,7 +1696,7 @@ function wireParentBody(){
         await sb.from('punishments').delete().eq('child_id', fresh.id).throwOnError();
         await sb.from('children').update({points:0, minutes:0, week_start: fresh.weekStart, goal_prize_id: null}).eq('id', fresh.id).throwOnError();
         await sb.from('chores').insert(fresh.chores.map(c=>({id:c.id, child_id:fresh.id, label:c.label, emoji:c.emoji, amount:c.amount, currency:c.currency, repeatable:c.repeatable, schedule:c.schedule||null}))).throwOnError();
-        await sb.from('prizes').insert(fresh.prizes.map(p=>({id:p.id, child_id:fresh.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null, limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}))).throwOnError();
+        await sb.from('prizes').insert(fresh.prizes.map(p=>({id:p.id, child_id:fresh.id, label:p.label, emoji:p.emoji, cost:p.cost, limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}))).throwOnError();
         await sb.from('challenges').insert(fresh.challenges.map(ch=>({id:ch.id, child_id:fresh.id, chore_id:ch.choreId, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, start_date:ch.startDate||null, end_date:ch.endDate||null}))).throwOnError();
       }catch(err){ handleSyncError(err); }
     }
@@ -1832,7 +1860,7 @@ function prizesHTML(){
       <div class="prize-emoji">${p.emoji}</div>
       <div class="prize-info">
         <div class="prize-title">${p.label}</div>
-        <div class="prize-cost">${p.cost} pts${p.grantsMinutes?` · +${p.grantsMinutes} min`:''}${limitText}</div>
+        <div class="prize-cost">${p.cost} pts${limitText}</div>
       </div>
       <button class="goal-toggle-btn ${isGoal?'active':''}" data-goal-toggle="${p.id}" title="${isGoal?'Remove as savings goal':'Set as savings goal'}">🎯</button>
       <button class="prize-btn ${pending?'requested':''}" data-prize="${p.id}" ${(isBlockedNow || limitReached || (!affordable && !pending))?'disabled':''}>
@@ -2156,6 +2184,9 @@ document.getElementById('challengeSaveBtn').addEventListener('click', saveChalle
 document.getElementById('punishmentClose').addEventListener('click', closePunishmentPicker);
 document.getElementById('punishmentOverlay').addEventListener('click', (e)=>{ if(e.target.id==='punishmentOverlay') closePunishmentPicker(); });
 document.getElementById('punishmentSaveBtn').addEventListener('click', savePunishment);
+document.getElementById('limitClose').addEventListener('click', closeLimitPicker);
+document.getElementById('limitOverlay').addEventListener('click', (e)=>{ if(e.target.id==='limitOverlay') closeLimitPicker(); });
+document.getElementById('limitSaveBtn').addEventListener('click', saveLimit);
 document.getElementById('undoToastBtn').addEventListener('click', performUndo);
 
 let view = 'home';
@@ -2167,7 +2198,7 @@ let historyWeekOffset = 0;    // 0 = this week, -1 = last week, ...
 let historyMonthOffset = 0;   // 0 = this month, -1 = last month, ...
 let pendingChoreIcon = '⭐';
 let pendingPrizeIcon = '🎁';
-let pendingPrizeLimitPeriod = 'day';
+let pendingPrizeLimit = {max:undefined, period:'day'};
 let pendingChoreSchedule = {type:'daily'};
 let pendingChoreCurrency = 'points';
 let iconPickerContext = null; // {type:'newChore'|'newPrize'|'editChore'|'editPrize', id?}
@@ -2177,6 +2208,8 @@ let challengePickerContext = null; // {type:'new'|'edit', id?}
 let challengeDraft = {type:'recurring'};
 let punishmentPickerContext = null; // {type:'new'|'edit', id?}
 let punishmentDraft = {durationUnit:'days'};
+let limitPickerContext = null; // {type:'newPrize'|'edit', id?}
+let limitDraft = {enabled:false, period:'day'};
 let settingsTab = 'profile'; // 'profile' | 'points' | 'manual' | 'data'
 let manualEntryType = null; // null | 'chore' | 'prize'
 
