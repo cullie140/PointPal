@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pointpal-cache-v38';
+const CACHE_NAME = 'pointpal-cache-v39';
 const ASSETS = [
   './',
   './index.html',
@@ -7,7 +7,9 @@ const ASSETS = [
   './icon-192-v2.png',
   './icon-512-v2.png',
   './apple-touch-icon-180.png',
-  './logo-horizontal.png'
+  './logo-horizontal.png',
+  './pip-celebration.png',
+  './pip-message.png'
 ];
 
 self.addEventListener('install', (event) => {

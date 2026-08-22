@@ -321,6 +321,10 @@
   .sheet-title{font-size:20px; font-weight:800; margin-bottom:4px;}
   .sheet-sub{font-size:13px; color:var(--ink-soft); font-weight:700; margin-bottom:18px;}
 
+  .pip-notify-img{width:180px; height:auto; margin:4px auto 14px; display:block;}
+  .pip-notify-title{font-family:'Baloo 2'; font-weight:800; font-size:21px; color:var(--navy); margin-bottom:8px;}
+  .pip-notify-body{font-size:15px; font-weight:700; color:var(--ink-soft); line-height:1.4;}
+
   .pin-dots{display:flex; gap:14px; justify-content:center; margin:22px 0;}
   .pin-dot{width:16px; height:16px; border-radius:50%; border:2px solid var(--teal); background:transparent;}
   .pin-dot.filled{background:var(--teal);}
@@ -731,6 +735,17 @@
     <div id="limitPickerBody"></div>
     <button class="btn btn-primary" id="limitSaveBtn" style="margin-top:14px;">Save Limit</button>
     <button class="btn btn-ghost" id="limitClose">Close</button>
+  </div>
+</div>
+
+<!-- PIP NOTIFICATION OVERLAY -->
+<div class="overlay" id="pipNotifyOverlay">
+  <div class="sheet" style="text-align:center;">
+    <div class="sheet-handle"></div>
+    <img class="pip-notify-img" id="pipNotifyImg" src="" alt="Pip">
+    <div class="pip-notify-title" id="pipNotifyTitle"></div>
+    <div class="pip-notify-body" id="pipNotifyBody"></div>
+    <button class="btn btn-primary" id="pipNotifyDismiss" style="margin-top:18px; width:100%;">Yay!</button>
   </div>
 </div>
 

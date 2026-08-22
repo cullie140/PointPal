@@ -68,7 +68,8 @@ function makeChild(id, name){
     prizes,
     challenges,
     punishments: [],            // {id, label, blockPoints, blockMinutes, blockPrizes, endsAt}
-    entries: []                // {id, ts, kind:'chore'|'bonus'|'redeem', refId, label, emoji, currency:'points'|'minutes', amount, status:'pending'|'approved'|'denied'}
+    entries: [],                // {id, ts, kind:'chore'|'bonus'|'redeem', refId, label, emoji, currency:'points'|'minutes', amount, status:'pending'|'approved'|'denied'}
+    notifications: []           // {id, kind:'celebration'|'message', label, emoji, amount, currency, message, ts} — queued Pip moments, delivered next time this child's session becomes active
   };
 }
 
@@ -90,6 +91,7 @@ function switchChild(id){
   child = c;
   localStorage.setItem(ACTIVE_CHILD_KEY, id);
   render();
+  deliverPendingNotifications();
 }
 
 function bySortOrder(a, b){
@@ -111,7 +113,13 @@ function toEntryRow(entry, childId){
     grants_minutes: entry.grantsMinutes || 0
   };
 }
-function rowsToChild(childRow, chores, prizes, challenges, punishments, entries){
+function toNotificationRow(n, childId){
+  return {
+    id: n.id, child_id: childId, kind: n.kind, label: n.label || null, emoji: n.emoji || null,
+    amount: n.amount==null ? null : n.amount, currency: n.currency || null, message: n.message || null, ts: n.ts
+  };
+}
+function rowsToChild(childRow, chores, prizes, challenges, punishments, entries, notifications){
   return {
     id: childRow.id,
     name: childRow.name,
@@ -125,6 +133,7 @@ function rowsToChild(childRow, chores, prizes, challenges, punishments, entries)
     prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, grantsMinutes:p.grants_minutes||undefined, limitMax:p.limit_max||undefined, limitPeriod:p.limit_period||undefined, sortOrder:p.sort_order==null?null:Number(p.sort_order)})).sort(bySortOrder),
     challenges: challenges.filter(ch=>ch.child_id===childRow.id).map(ch=>({id:ch.id, choreId:ch.chore_id, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, startDate:ch.start_date||undefined, endDate:ch.end_date||undefined})),
     punishments: punishments.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, blockPoints:p.block_points, blockMinutes:p.block_minutes, blockPrizes:p.block_prizes, endsAt:Number(p.ends_at)})),
+    notifications: (notifications||[]).filter(n=>n.child_id===childRow.id).map(n=>({id:n.id, kind:n.kind, label:n.label, emoji:n.emoji, amount:n.amount, currency:n.currency, message:n.message, ts:Number(n.ts)})).sort((a,b)=>a.ts-b.ts),
     entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status, fulfilled:!!e.fulfilled, minutesUsed:Number(e.minutes_used)||0, grantsMinutes:Number(e.grants_minutes)||0}))
   };
 }
@@ -137,16 +146,17 @@ async function insertChildFull(c){
 }
 
 async function fetchCloudState(){
-  const [childrenRes, choresRes, prizesRes, challengesRes, punishmentsRes, entriesRes, settingsRes] = await Promise.all([
+  const [childrenRes, choresRes, prizesRes, challengesRes, punishmentsRes, entriesRes, notificationsRes, settingsRes] = await Promise.all([
     sb.from('children').select('*').order('created_at'),
     sb.from('chores').select('*'),
     sb.from('prizes').select('*'),
     sb.from('challenges').select('*'),
     sb.from('punishments').select('*'),
     sb.from('entries').select('*'),
+    sb.from('notifications').select('*'),
     sb.from('family_settings').select('*').maybeSingle()
   ]);
-  const firstError = childrenRes.error || choresRes.error || prizesRes.error || challengesRes.error || punishmentsRes.error || entriesRes.error || settingsRes.error;
+  const firstError = childrenRes.error || choresRes.error || prizesRes.error || challengesRes.error || punishmentsRes.error || entriesRes.error || notificationsRes.error || settingsRes.error;
   if(firstError) throw firstError;
 
   let childRows = childrenRes.data;
@@ -165,7 +175,7 @@ async function fetchCloudState(){
   if(settingsRes.data){ pin = settingsRes.data.pin; }
   else { await sb.from('family_settings').insert({pin:'1234'}).throwOnError(); }
 
-  const children = childRows.map(cr => rowsToChild(cr, choreRows, prizeRows, challengeRows, punishmentRows, entriesRes.data));
+  const children = childRows.map(cr => rowsToChild(cr, choreRows, prizeRows, challengeRows, punishmentRows, entriesRes.data, notificationsRes.data));
   return { pin, children };
 }
 
@@ -192,6 +202,7 @@ function scheduleRefetch(){
       connectionOk = true;
       updateOfflineBanner();
       render();
+      deliverPendingNotifications();
     }catch(e){
       handleSyncError(e);
     }
@@ -208,6 +219,7 @@ function subscribeRealtime(){
     .on('postgres_changes', {event:'*', schema:'public', table:'challenges', filter}, scheduleRefetch)
     .on('postgres_changes', {event:'*', schema:'public', table:'punishments', filter}, scheduleRefetch)
     .on('postgres_changes', {event:'*', schema:'public', table:'entries', filter}, scheduleRefetch)
+    .on('postgres_changes', {event:'*', schema:'public', table:'notifications', filter}, scheduleRefetch)
     .subscribe((status)=>{
       if(status==='SUBSCRIBED'){ connectionOk = true; updateOfflineBanner(); }
       else if(status==='CHANNEL_ERROR' || status==='TIMED_OUT' || status==='CLOSED'){ connectionOk = false; updateOfflineBanner(); }
@@ -541,6 +553,14 @@ async function approveEntry(id, opts){
     burstConfetti();
   }
 
+  const notif = {
+    id: uid(), kind:'celebration', label: e.label, emoji: e.emoji,
+    amount: e.kind==='redeem' ? null : e.amount, currency: e.kind==='redeem' ? null : e.currency,
+    message: null, ts: Date.now()
+  };
+  c.notifications = c.notifications || [];
+  c.notifications.push(notif);
+
   const newBonuses = checkChallengesForApproval(c, e, 'pending');
   if(newBonuses.length){
     if(lastActionSnapshot) newBonuses.forEach(b=>lastActionSnapshot.extraEntryIds.push(b.id));
@@ -551,6 +571,7 @@ async function approveEntry(id, opts){
   try{
     await sb.from('entries').update({status:'approved'}).eq('id', id).throwOnError();
     await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id).throwOnError();
+    await sb.from('notifications').insert(toNotificationRow(notif, c.id)).throwOnError();
     for(const b of newBonuses) await sb.from('entries').insert(toEntryRow(b, c.id)).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
@@ -883,6 +904,7 @@ function openParent(){
 }
 function closeParent(){
   document.getElementById('parentOverlay').classList.remove('show');
+  deliverPendingNotifications();
 }
 function renderParentBody(){
   const body = document.getElementById('parentBody');
@@ -1473,14 +1495,37 @@ function parentSettingsHTML(){
       <button class="subtab-btn ${settingsTab==='profile'?'active':''}" data-stab="profile">Profile</button>
       <button class="subtab-btn ${settingsTab==='points'?'active':''}" data-stab="points">Points &amp; Time</button>
       <button class="subtab-btn ${settingsTab==='manual'?'active':''}" data-stab="manual">Manual Entries</button>
+      <button class="subtab-btn ${settingsTab==='message'?'active':''}" data-stab="message">Message</button>
       <button class="subtab-btn ${settingsTab==='data'?'active':''}" data-stab="data">Data</button>
     </div>`;
   let body;
   if(settingsTab==='points') body = settingsPointsHTML();
   else if(settingsTab==='manual') body = settingsManualHTML();
+  else if(settingsTab==='message') body = settingsMessageHTML();
   else if(settingsTab==='data') body = settingsDataHTML();
   else body = settingsProfileHTML();
   return tabs + body;
+}
+
+function settingsMessageHTML(){
+  const pending = (child.notifications||[]).filter(n=>n.kind==='message');
+  const pendingHTML = pending.length ? `
+    <div class="sheet-sub" style="margin:14px 0 6px;">Still waiting to be seen:</div>
+    ${pending.map(n=>`
+      <div class="list-edit-item">
+        <div class="item-row-main">
+          <div style="flex:1; min-width:0; font-weight:700; font-size:14px;">"${n.message}"</div>
+          <button class="icon-btn-sm" data-cancel-message="${n.id}">Cancel</button>
+        </div>
+      </div>
+    `).join('')}
+  ` : '';
+  return `
+    <div class="sheet-sub" style="margin-bottom:8px;">Send <b>${child.name}</b> a note as Pip — it shows up next time they open their view, the same way an approval celebration does.</div>
+    <textarea id="pipMessageInput" class="child-name-input" rows="3" placeholder="You're doing great, keep it up!" style="resize:vertical; min-height:80px;"></textarea>
+    <button class="btn btn-primary" id="sendPipMessageBtn" style="margin-top:10px;">Send as Pip</button>
+    ${pendingHTML}
+  `;
 }
 
 function settingsProfileHTML(){
@@ -1891,6 +1936,28 @@ function wireParentBody(){
     if(!amt){ toast('Enter a valid number of minutes'); return; }
     logMinutesUsed(amt);
   };
+  const sendPipMessageBtn = document.getElementById('sendPipMessageBtn');
+  if(sendPipMessageBtn) sendPipMessageBtn.onclick=async ()=>{
+    if(!requireOnline()) return;
+    const input = document.getElementById('pipMessageInput');
+    const text = input.value.trim();
+    if(!text) return;
+    const notif = { id:uid(), kind:'message', label:null, emoji:null, amount:null, currency:null, message:text, ts:Date.now() };
+    child.notifications = child.notifications || [];
+    child.notifications.push(notif);
+    toast(`Message queued for ${child.name} 💌`);
+    renderParentBody();
+    try{ await sb.from('notifications').insert(toNotificationRow(notif, child.id)).throwOnError(); }catch(err){ handleSyncError(err); }
+  };
+  document.querySelectorAll('[data-cancel-message]').forEach(b=>{
+    b.onclick=async ()=>{
+      if(!requireOnline()) return;
+      const id = b.dataset.cancelMessage;
+      child.notifications = child.notifications.filter(n=>n.id!==id);
+      renderParentBody();
+      try{ await sb.from('notifications').delete().eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
+    };
+  });
 
   document.querySelectorAll('[data-stab]').forEach(b=>{
     b.onclick=()=>{ settingsTab = b.dataset.stab; manualEntryType = null; renderParentBody(); };
@@ -2408,6 +2475,48 @@ function burstConfetti(){
   }
 }
 
+/* ============ PIP NOTIFICATIONS ============ */
+function deliverPendingNotifications(){
+  if(!child || !child.notifications || !child.notifications.length) return;
+  if(kioskLocked) return;
+  const parentOverlay = document.getElementById('parentOverlay');
+  if(parentOverlay && parentOverlay.classList.contains('show')) return;
+  if(document.getElementById('pipNotifyOverlay').classList.contains('show')) return;
+  showNextNotification();
+}
+
+function showNextNotification(){
+  if(!child.notifications.length){ document.getElementById('pipNotifyOverlay').classList.remove('show'); return; }
+  const n = child.notifications[0];
+  const img = document.getElementById('pipNotifyImg');
+  const title = document.getElementById('pipNotifyTitle');
+  const body = document.getElementById('pipNotifyBody');
+  if(n.kind==='message'){
+    img.src = 'pip-message.png';
+    title.textContent = 'A message from Pip';
+    body.textContent = n.message;
+  } else {
+    img.src = 'pip-celebration.png';
+    title.textContent = `${n.emoji||'🎉'} ${n.label} approved!`.trim();
+    if(n.currency){
+      const cur = n.currency==='points' ? 'pts' : 'min';
+      body.textContent = `+${n.amount} ${cur} — nice work, ${child.name}!`;
+    } else {
+      body.textContent = `You got it, ${child.name}! Ask a parent when it's ready.`;
+    }
+  }
+  document.getElementById('pipNotifyOverlay').classList.add('show');
+  burstConfetti();
+}
+
+async function dismissNotification(){
+  if(!child.notifications.length) return;
+  const n = child.notifications.shift();
+  if(child.notifications.length){ showNextNotification(); }
+  else { document.getElementById('pipNotifyOverlay').classList.remove('show'); }
+  try{ await sb.from('notifications').delete().eq('id', n.id).throwOnError(); }catch(err){ handleSyncError(err); }
+}
+
 function timeAgo(ts){
   const diff = Date.now()-ts;
   const mins = Math.floor(diff/60000);
@@ -2442,6 +2551,7 @@ async function afterAuth(){
     buildPinPad();
     ensureWeek(child);
     render();
+    deliverPendingNotifications();
     scheduleMidnightRefresh();
     subscribeRealtime();
     startAppIdleWatch();
@@ -2506,6 +2616,8 @@ document.getElementById('limitClose').addEventListener('click', closeLimitPicker
 document.getElementById('limitOverlay').addEventListener('click', (e)=>{ if(e.target.id==='limitOverlay') closeLimitPicker(); });
 document.getElementById('limitSaveBtn').addEventListener('click', saveLimit);
 document.getElementById('undoToastBtn').addEventListener('click', performUndo);
+document.getElementById('pipNotifyDismiss').addEventListener('click', dismissNotification);
+document.getElementById('pipNotifyOverlay').addEventListener('click', (e)=>{ if(e.target.id==='pipNotifyOverlay') dismissNotification(); });
 
 let view = 'home';
 let pinContext = null;   // {type:'parent'} | {type:'child', childId}
