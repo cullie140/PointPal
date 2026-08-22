@@ -904,7 +904,6 @@ function openParent(){
 }
 function closeParent(){
   document.getElementById('parentOverlay').classList.remove('show');
-  deliverPendingNotifications();
 }
 function renderParentBody(){
   const body = document.getElementById('parentBody');
