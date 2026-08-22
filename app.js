@@ -804,30 +804,38 @@ function parentApproveHTML(){
 function parentChoresHTML(){
   const rows = child.chores.map(c=>`
     <div class="list-edit-item">
-      <button class="icon-swatch" data-edit-chore-icon="${c.id}">${c.emoji}</button>
-      <input class="settings-input label-edit" data-chore-label="${c.id}" value="${c.label}">
-      <button class="schedule-pill" data-edit-chore-schedule="${c.id}">📅 ${scheduleSummaryText(c.schedule)}</button>
-      <label style="display:flex; align-items:center; gap:5px; font-weight:700; font-size:12px; color:var(--ink-soft); white-space:nowrap;">
-        <input type="checkbox" data-chore-repeat="${c.id}" ${c.repeatable?'checked':''}> Repeatable
-      </label>
-      <input class="settings-input" type="number" min="0" data-chore-amount="${c.id}" value="${c.amount}">
-      <button class="icon-btn-sm currency-toggle" data-chore-currency="${c.id}">${c.currency==='points'?'Pts':'Min'}</button>
-      <button class="icon-btn-sm" data-chore-del="${c.id}">Remove</button>
+      <div class="item-row-main">
+        <button class="icon-swatch" data-edit-chore-icon="${c.id}">${c.emoji}</button>
+        <input class="label-edit" data-chore-label="${c.id}" value="${c.label}">
+        <button class="icon-btn-sm" data-chore-del="${c.id}">Remove</button>
+      </div>
+      <div class="item-row-meta">
+        <input class="settings-input" type="number" min="0" data-chore-amount="${c.id}" value="${c.amount}">
+        <button class="icon-btn-sm currency-toggle" data-chore-currency="${c.id}">${c.currency==='points'?'Pts':'Min'}</button>
+        <button class="schedule-pill" data-edit-chore-schedule="${c.id}">📅 ${scheduleSummaryText(c.schedule)}</button>
+        <label class="inline-check">
+          <input type="checkbox" data-chore-repeat="${c.id}" ${c.repeatable?'checked':''}> Repeatable
+        </label>
+      </div>
     </div>
   `).join('');
   return `
     <div class="sheet-sub">Editing <b>${child.name}</b>'s activities. Names, amounts, icons, and schedules all update live. Removing an activity doesn't erase past history.</div>
     ${rows}
-    <div class="add-row" style="flex-wrap:wrap;">
-      <button class="icon-swatch" id="newChoreIconBtn" style="margin-top:10px;">${pendingChoreIcon}</button>
-      <input id="newChoreLabel" class="child-name-input" placeholder="New activity name" style="flex:1; margin-top:10px;">
-      <button class="schedule-pill" id="newChoreScheduleBtn" style="margin-top:10px;">📅 ${scheduleSummaryText(pendingChoreSchedule)}</button>
-      <input id="newChoreAmount" class="settings-input" type="number" placeholder="amt" style="margin-top:8px;">
-      <button class="icon-btn-sm currency-toggle" id="newChoreCurrencyBtn" style="margin-top:8px;">${pendingChoreCurrency==='points'?'Pts':'Min'}</button>
-      <label style="display:flex; align-items:center; gap:6px; font-weight:700; font-size:13px; margin-top:8px;">
-        <input type="checkbox" id="newChoreRepeat"> Repeatable
-      </label>
-      <button class="btn btn-primary" id="addChoreBtn" style="margin-top:8px;">Add Activity</button>
+    <div class="list-edit-item" style="border-bottom:none;">
+      <div class="item-row-main" style="margin-top:10px;">
+        <button class="icon-swatch" id="newChoreIconBtn">${pendingChoreIcon}</button>
+        <input id="newChoreLabel" class="label-edit" placeholder="New activity name">
+      </div>
+      <div class="item-row-meta">
+        <input id="newChoreAmount" class="settings-input" type="number" placeholder="amt">
+        <button class="icon-btn-sm currency-toggle" id="newChoreCurrencyBtn">${pendingChoreCurrency==='points'?'Pts':'Min'}</button>
+        <button class="schedule-pill" id="newChoreScheduleBtn">📅 ${scheduleSummaryText(pendingChoreSchedule)}</button>
+        <label class="inline-check">
+          <input type="checkbox" id="newChoreRepeat"> Repeatable
+        </label>
+      </div>
+      <button class="btn btn-primary" id="addChoreBtn" style="margin-top:10px;">Add Activity</button>
     </div>
   `;
 }
@@ -839,7 +847,7 @@ function parentChallengesHTML(){
     const window = ch.type==='recurring' ? 'Weekly' : `${ch.startDate} → ${ch.endDate}`;
     return `
     <div class="list-edit-item">
-      <div style="flex:1 1 100%; display:flex; align-items:center; gap:10px;">
+      <div style="display:flex; align-items:center; gap:10px;">
         <div style="font-size:24px;">${chore ? chore.emoji : '🏆'}</div>
         <div style="flex:1; min-width:0;">
           <div style="font-weight:800; font-size:14px;">${ch.label}</div>
@@ -864,7 +872,7 @@ function parentPunishmentsHTML(){
     const blocks = [p.blockPoints&&'🪙 points', p.blockMinutes&&'⏰ time', p.blockPrizes&&'🎁 prizes'].filter(Boolean).join(' · ');
     return `
     <div class="list-edit-item">
-      <div style="flex:1 1 100%; display:flex; align-items:center; gap:10px;">
+      <div style="display:flex; align-items:center; gap:10px;">
         <div style="font-size:24px;">🚫</div>
         <div style="flex:1; min-width:0;">
           <div style="font-weight:800; font-size:14px;">${p.label}</div>
@@ -887,22 +895,30 @@ function parentPunishmentsHTML(){
 function parentPrizesHTML(){
   const rows = child.prizes.map(p=>`
     <div class="list-edit-item">
-      <button class="icon-swatch" data-edit-prize-icon="${p.id}">${p.emoji}</button>
-      <input class="settings-input label-edit" data-prize-label="${p.id}" value="${p.label}">
-      <input class="settings-input" type="number" min="0" data-prize-cost="${p.id}" value="${p.cost}">
-      <button class="schedule-pill" data-edit-prize-limit="${p.id}">🔁 ${limitSummaryText(p.limitMax, p.limitPeriod)}</button>
-      <button class="icon-btn-sm" data-prize-del="${p.id}">Remove</button>
+      <div class="item-row-main">
+        <button class="icon-swatch" data-edit-prize-icon="${p.id}">${p.emoji}</button>
+        <input class="label-edit" data-prize-label="${p.id}" value="${p.label}">
+        <button class="icon-btn-sm" data-prize-del="${p.id}">Remove</button>
+      </div>
+      <div class="item-row-meta">
+        <input class="settings-input" type="number" min="0" data-prize-cost="${p.id}" value="${p.cost}">
+        <button class="schedule-pill" data-edit-prize-limit="${p.id}">🔁 ${limitSummaryText(p.limitMax, p.limitPeriod)}</button>
+      </div>
     </div>
   `).join('');
   return `
     <div class="sheet-sub">Editing <b>${child.name}</b>'s prizes. Names, costs, and icons all update live. The 🔁 pill sets an optional redemption limit — cap how often a prize can be redeemed per day or week.</div>
     ${rows}
-    <div class="add-row" style="flex-wrap:wrap;">
-      <button class="icon-swatch" id="newPrizeIconBtn" style="margin-top:10px;">${pendingPrizeIcon}</button>
-      <input id="newPrizeLabel" class="child-name-input" placeholder="New prize name" style="flex:1; margin-top:10px;">
-      <input id="newPrizeCost" class="settings-input" type="number" placeholder="cost" style="margin-top:8px;">
-      <button class="schedule-pill" id="newPrizeLimitBtn" style="margin-top:8px;">🔁 ${limitSummaryText(pendingPrizeLimit.max, pendingPrizeLimit.period)}</button>
-      <button class="btn btn-primary" id="addPrizeBtn" style="margin-top:8px;">Add Prize</button>
+    <div class="list-edit-item" style="border-bottom:none;">
+      <div class="item-row-main" style="margin-top:10px;">
+        <button class="icon-swatch" id="newPrizeIconBtn">${pendingPrizeIcon}</button>
+        <input id="newPrizeLabel" class="label-edit" placeholder="New prize name">
+      </div>
+      <div class="item-row-meta">
+        <input id="newPrizeCost" class="settings-input" type="number" placeholder="cost">
+        <button class="schedule-pill" id="newPrizeLimitBtn">🔁 ${limitSummaryText(pendingPrizeLimit.max, pendingPrizeLimit.period)}</button>
+      </div>
+      <button class="btn btn-primary" id="addPrizeBtn" style="margin-top:10px;">Add Prize</button>
     </div>
   `;
 }
@@ -1308,8 +1324,10 @@ function parentSettingsHTML(){
 function settingsProfileHTML(){
   const rows = state.children.map(c=>`
     <div class="list-edit-item">
-      <input class="settings-input label-edit" data-child-name="${c.id}" value="${c.name}">
-      <button class="icon-btn-sm" data-child-del="${c.id}" ${state.children.length<=1?'disabled':''}>Remove</button>
+      <div class="item-row-main">
+        <input class="label-edit" data-child-name="${c.id}" value="${c.name}">
+        <button class="icon-btn-sm" data-child-del="${c.id}" ${state.children.length<=1?'disabled':''}>Remove</button>
+      </div>
     </div>
   `).join('');
   return `

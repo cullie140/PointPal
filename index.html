@@ -354,9 +354,9 @@
   .approval-item{
     background:var(--bg); border-radius:16px; padding:14px; margin-bottom:12px;
   }
-  .approval-top{display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;}
-  .approval-label{font-weight:800; font-size:15px;}
-  .approval-amount{font-weight:800; font-size:15px;}
+  .approval-top{display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:6px 10px; margin-bottom:10px;}
+  .approval-label{flex:1 1 auto; min-width:0; font-weight:800; font-size:15px;}
+  .approval-amount{flex-shrink:0; white-space:nowrap; font-weight:800; font-size:15px;}
   .approval-meta{font-size:12px; color:var(--ink-soft); font-weight:700; margin-bottom:10px;}
   .approval-actions{display:flex; gap:0;}
   .approval-actions .btn{margin-top:0; flex:1; padding:11px; border-radius:0;}
@@ -378,6 +378,16 @@
     flex:1; padding:10px; border-radius:14px; border:none; background:var(--bg); font-weight:800; font-size:13px; color:var(--ink-soft);
   }
   .tab-btn.active{background:var(--navy); color:#fff;}
+  @media (max-width:699px){
+    .tab-row-scroll{
+      flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch;
+      scrollbar-width:none; margin:0 -20px 16px; padding:0 20px 4px;
+      -webkit-mask-image:linear-gradient(to right, #000 calc(100% - 24px), transparent);
+              mask-image:linear-gradient(to right, #000 calc(100% - 24px), transparent);
+    }
+    .tab-row-scroll::-webkit-scrollbar{display:none;}
+    .tab-row-scroll .tab-btn{flex:0 0 auto; white-space:nowrap; padding:10px 16px;}
+  }
 
   .subtab-row{
     display:flex; gap:20px; flex-wrap:wrap;
@@ -459,13 +469,23 @@
     width:100%; padding:12px 14px; border-radius:12px; border:2px solid #E4ECEE;
     font-family:'Nunito'; font-weight:700; font-size:15px; margin-top:6px;
   }
-  .icon-btn-sm{background:var(--bg); border:none; border-radius:10px; padding:8px 12px; font-weight:800; color:var(--coral-deep); font-size:13px;}
+  .icon-btn-sm{background:var(--bg); border:none; border-radius:10px; padding:8px 12px; font-weight:800; color:var(--coral-deep); font-size:13px; flex-shrink:0;}
   .icon-btn-sm:disabled{opacity:.4; pointer-events:none;}
   .add-row{display:flex; gap:8px; margin-top:14px;}
   .add-row input{flex:1;}
-  .list-edit-item{display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #EEF3F4; flex-wrap:wrap;}
-  .list-edit-item span{flex:1; font-weight:700; font-size:14px;}
-  .list-edit-item .label-edit{flex:1 1 120px; width:auto; text-align:left;}
+  .list-edit-item{padding:12px 0; border-bottom:1px solid #EEF3F4;}
+  .list-edit-item:last-child{border-bottom:none;}
+  .item-row-main{display:flex; align-items:center; gap:10px;}
+  .item-row-meta{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px;}
+  .label-edit{
+    flex:1; min-width:0; width:auto; text-align:left; padding:10px 12px;
+    border:2px solid #E4ECEE; border-radius:10px;
+    font-family:'Nunito'; font-weight:700; font-size:14px;
+  }
+  .inline-check{
+    display:flex; align-items:center; gap:5px; white-space:nowrap; flex-shrink:0;
+    font-weight:700; font-size:12.5px; color:var(--ink-soft);
+  }
 
   .icon-swatch{
     width:44px; height:44px; flex-shrink:0; border-radius:12px; border:none;
@@ -500,7 +520,7 @@
 
   .schedule-pill{
     background:var(--bg); border:none; border-radius:20px; padding:8px 14px;
-    font-weight:800; font-size:12.5px; color:var(--navy); white-space:nowrap;
+    font-weight:800; font-size:12.5px; color:var(--navy); white-space:nowrap; flex-shrink:0;
   }
   .schedule-pill:active{transform:scale(.96);}
   .sched-type-row{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;}
@@ -618,7 +638,7 @@
   <div class="sheet">
     <div class="sheet-handle"></div>
     <div class="sheet-title">Parent Zone</div>
-    <div class="tab-row">
+    <div class="tab-row tab-row-scroll">
       <button class="tab-btn active" data-ptab="approve">Approvals</button>
       <button class="tab-btn" data-ptab="chores">Activities</button>
       <button class="tab-btn" data-ptab="prizes">Prizes</button>
