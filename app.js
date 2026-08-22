@@ -43,6 +43,7 @@ function makeChild(id, name){
     chores: structuredClone(DEFAULT_CHORES),
     prizes: structuredClone(DEFAULT_PRIZES),
     challenges: structuredClone(DEFAULT_CHALLENGES),
+    punishments: [],            // {id, label, blockPoints, blockMinutes, blockPrizes, endsAt}
     entries: []                // {id, ts, kind:'chore'|'bonus'|'redeem', refId, label, emoji, currency:'points'|'minutes', amount, status:'pending'|'approved'|'denied', grantsMinutes?}
   };
 }
@@ -75,7 +76,7 @@ function toEntryRow(entry, childId){
     status: entry.status, grants_minutes: entry.grantsMinutes || null
   };
 }
-function rowsToChild(childRow, chores, prizes, challenges, entries){
+function rowsToChild(childRow, chores, prizes, challenges, punishments, entries){
   return {
     id: childRow.id,
     name: childRow.name,
@@ -85,6 +86,7 @@ function rowsToChild(childRow, chores, prizes, challenges, entries){
     chores: chores.filter(c=>c.child_id===childRow.id).map(c=>({id:c.id, label:c.label, emoji:c.emoji, amount:c.amount, currency:c.currency, repeatable:c.repeatable, schedule:c.schedule||undefined})),
     prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, grantsMinutes:p.grants_minutes||undefined})),
     challenges: challenges.filter(ch=>ch.child_id===childRow.id).map(ch=>({id:ch.id, choreId:ch.chore_id, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, startDate:ch.start_date||undefined, endDate:ch.end_date||undefined})),
+    punishments: punishments.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, blockPoints:p.block_points, blockMinutes:p.block_minutes, blockPrizes:p.block_prizes, endsAt:Number(p.ends_at)})),
     entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status, grantsMinutes:e.grants_minutes||undefined}))
   };
 }
@@ -93,22 +95,24 @@ async function insertChildFull(c){
   if(c.chores.length) await sb.from('chores').insert(c.chores.map(ch=>({id:ch.id, child_id:c.id, label:ch.label, emoji:ch.emoji, amount:ch.amount, currency:ch.currency, repeatable:ch.repeatable, schedule:ch.schedule||null}))).throwOnError();
   if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null}))).throwOnError();
   if(c.challenges.length) await sb.from('challenges').insert(c.challenges.map(ch=>({id:ch.id, child_id:c.id, chore_id:ch.choreId, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, start_date:ch.startDate||null, end_date:ch.endDate||null}))).throwOnError();
+  if(c.punishments.length) await sb.from('punishments').insert(c.punishments.map(p=>({id:p.id, child_id:c.id, label:p.label, block_points:p.blockPoints, block_minutes:p.blockMinutes, block_prizes:p.blockPrizes, ends_at:p.endsAt}))).throwOnError();
 }
 
 async function fetchCloudState(){
-  const [childrenRes, choresRes, prizesRes, challengesRes, entriesRes, settingsRes] = await Promise.all([
+  const [childrenRes, choresRes, prizesRes, challengesRes, punishmentsRes, entriesRes, settingsRes] = await Promise.all([
     sb.from('children').select('*').order('created_at'),
     sb.from('chores').select('*'),
     sb.from('prizes').select('*'),
     sb.from('challenges').select('*'),
+    sb.from('punishments').select('*'),
     sb.from('entries').select('*'),
     sb.from('family_settings').select('*').maybeSingle()
   ]);
-  const firstError = childrenRes.error || choresRes.error || prizesRes.error || challengesRes.error || entriesRes.error || settingsRes.error;
+  const firstError = childrenRes.error || choresRes.error || prizesRes.error || challengesRes.error || punishmentsRes.error || entriesRes.error || settingsRes.error;
   if(firstError) throw firstError;
 
   let childRows = childrenRes.data;
-  let choreRows = choresRes.data, prizeRows = prizesRes.data, challengeRows = challengesRes.data;
+  let choreRows = choresRes.data, prizeRows = prizesRes.data, challengeRows = challengesRes.data, punishmentRows = punishmentsRes.data;
   if(childRows.length===0){
     const fresh = makeChild(uid(), 'Champ');
     await insertChildFull(fresh);
@@ -116,13 +120,14 @@ async function fetchCloudState(){
     choreRows = fresh.chores.map(c=>({...c, child_id:fresh.id}));
     prizeRows = fresh.prizes.map(p=>({...p, child_id:fresh.id, grants_minutes:p.grantsMinutes||null}));
     challengeRows = fresh.challenges.map(ch=>({...ch, child_id:fresh.id, chore_id:ch.choreId, start_date:ch.startDate||null, end_date:ch.endDate||null}));
+    punishmentRows = [];
   }
 
   let pin = '1234';
   if(settingsRes.data){ pin = settingsRes.data.pin; }
   else { await sb.from('family_settings').insert({pin:'1234'}).throwOnError(); }
 
-  const children = childRows.map(cr => rowsToChild(cr, choreRows, prizeRows, challengeRows, entriesRes.data));
+  const children = childRows.map(cr => rowsToChild(cr, choreRows, prizeRows, challengeRows, punishmentRows, entriesRes.data));
   return { pin, children };
 }
 
@@ -163,6 +168,7 @@ function subscribeRealtime(){
     .on('postgres_changes', {event:'*', schema:'public', table:'chores', filter}, scheduleRefetch)
     .on('postgres_changes', {event:'*', schema:'public', table:'prizes', filter}, scheduleRefetch)
     .on('postgres_changes', {event:'*', schema:'public', table:'challenges', filter}, scheduleRefetch)
+    .on('postgres_changes', {event:'*', schema:'public', table:'punishments', filter}, scheduleRefetch)
     .on('postgres_changes', {event:'*', schema:'public', table:'entries', filter}, scheduleRefetch)
     .subscribe((status)=>{
       if(status==='SUBSCRIBED'){ connectionOk = true; updateOfflineBanner(); }
@@ -303,6 +309,32 @@ function checkChallengesForApproval(c, entry, status){
   ensureWeek(c);
   return (c.challenges||[]).filter(ch=>ch.choreId===entry.refId).map(ch=>maybeGrantChallengeBonus(c, ch, status)).filter(Boolean);
 }
+
+/* ---------- punishments: temporary blocks on earning/redeeming ---------- */
+function isPunishmentActive(p){ return Date.now() < p.endsAt; }
+function activePunishments(c){ return (c.punishments||[]).filter(isPunishmentActive); }
+function isBlocked(c, field){ return activePunishments(c).some(p=>p[field]); }
+function isChoreBlocked(c, chore){
+  return (chore.currency==='points' && isBlocked(c,'blockPoints')) || (chore.currency==='minutes' && isBlocked(c,'blockMinutes'));
+}
+function formatRemaining(ms){
+  const totalMin = Math.max(0, Math.ceil(ms/60000));
+  const days = Math.floor(totalMin/1440);
+  const hours = Math.floor((totalMin%1440)/60);
+  const mins = totalMin%60;
+  if(days>0) return `${days}d ${hours}h left`;
+  if(hours>0) return `${hours}h ${mins}m left`;
+  return `${mins}m left`;
+}
+let punishmentExpiryTimer = null;
+function schedulePunishmentExpiry(){
+  clearTimeout(punishmentExpiryTimer);
+  const active = activePunishments(child);
+  if(!active.length) return;
+  const soonest = Math.min(...active.map(p=>p.endsAt));
+  punishmentExpiryTimer = setTimeout(render, Math.max(0, soonest-Date.now())+250);
+}
+
 function pendingEntries(){
   const all = [];
   state.children.forEach(c=>{
@@ -333,6 +365,7 @@ async function requestChore(choreId, evt){
   if(!requireOnline()) return;
   const chore = child.chores.find(c=>c.id===choreId);
   if(!chore) return;
+  if(isChoreBlocked(child, chore)){ toast('🚫 Blocked by a punishment right now'); return; }
   if(chore.schedule && chore.schedule.type==='once'){
     const already = child.entries.some(e=>e.kind==='chore' && e.refId===choreId && e.status!=='denied');
     if(already){ toast(`${chore.label} is already done! 🎉`); return; }
@@ -405,6 +438,7 @@ async function requestPrize(prizeId, evt){
   if(!requireOnline()) return;
   const prize = child.prizes.find(p=>p.id===prizeId);
   if(!prize) return;
+  if(isBlocked(child, 'blockPrizes')){ toast('🚫 Prize redemption is paused right now'); return; }
   const already = child.entries.some(e=>e.kind==='redeem' && e.refId===prizeId && e.status==='pending');
   if(already){ toast('Already waiting on approval for that one!'); return; }
   const entry = {
@@ -696,6 +730,7 @@ function renderParentBody(){
   else if(activeParentTab==='chores') body.innerHTML = parentChoresHTML();
   else if(activeParentTab==='prizes') body.innerHTML = parentPrizesHTML();
   else if(activeParentTab==='challenges') body.innerHTML = parentChallengesHTML();
+  else if(activeParentTab==='punishments') body.innerHTML = parentPunishmentsHTML();
   else body.innerHTML = parentSettingsHTML();
   wireParentBody();
 }
@@ -790,6 +825,31 @@ function parentChallengesHTML(){
     ${rows || `<div class="empty-state"><div class="e">🏆</div>No challenges set up yet.</div>`}
     <div class="add-row" style="margin-top:16px;">
       <button class="btn btn-primary" id="addChallengeBtn" style="width:100%;">+ Add Challenge</button>
+    </div>
+  `;
+}
+
+function parentPunishmentsHTML(){
+  const rows = (child.punishments||[]).filter(isPunishmentActive).map(p=>{
+    const blocks = [p.blockPoints&&'🪙 points', p.blockMinutes&&'⏰ time', p.blockPrizes&&'🎁 prizes'].filter(Boolean).join(' · ');
+    return `
+    <div class="list-edit-item">
+      <div style="flex:1 1 100%; display:flex; align-items:center; gap:10px;">
+        <div style="font-size:24px;">🚫</div>
+        <div style="flex:1; min-width:0;">
+          <div style="font-weight:800; font-size:14px;">${p.label}</div>
+          <div style="font-size:12px; color:var(--ink-soft); font-weight:700;">${blocks} blocked · ${formatRemaining(p.endsAt-Date.now())}</div>
+        </div>
+        <button class="icon-btn-sm" data-edit-punishment="${p.id}">Edit</button>
+        <button class="icon-btn-sm" data-punishment-del="${p.id}">Remove</button>
+      </div>
+    </div>`;
+  }).join('');
+  return `
+    <div class="sheet-sub">Punishments temporarily block earning points, earning screen time, and/or redeeming prizes for a set amount of time. They lift automatically, or you can remove one early.</div>
+    ${rows || `<div class="empty-state"><div class="e">🚫</div>No active punishments.</div>`}
+    <div class="add-row" style="margin-top:16px;">
+      <button class="btn btn-primary" id="addPunishmentBtn" style="width:100%;">+ Add Punishment</button>
     </div>
   `;
 }
@@ -1050,6 +1110,88 @@ async function saveChallenge(){
     renderParentBody(); render();
     try{
       await sb.from('challenges').update({chore_id:c.choreId, label:c.label, target:c.target, bonus:c.bonus, currency:c.currency, type:c.type, start_date:c.startDate||null, end_date:c.endDate||null}).eq('id', c.id).throwOnError();
+    }catch(err){ handleSyncError(err); }
+  }
+}
+
+function openPunishmentPicker(ctx){
+  punishmentPickerContext = ctx;
+  const existing = ctx.type==='edit' ? child.punishments.find(p=>p.id===ctx.id) : null;
+  const remainingMs = existing ? Math.max(0, existing.endsAt-Date.now()) : 0;
+  punishmentDraft = existing ? {
+    label: existing.label, blockPoints: existing.blockPoints, blockMinutes: existing.blockMinutes, blockPrizes: existing.blockPrizes,
+    durationAmount: Math.max(1, Math.round(remainingMs/3600000)), durationUnit:'hours'
+  } : { label:'', blockPoints:false, blockMinutes:false, blockPrizes:false, durationAmount:1, durationUnit:'days' };
+  document.getElementById('punishmentPickerBody').innerHTML = punishmentEditorHTML();
+  wirePunishmentEditor();
+  document.getElementById('punishmentOverlay').classList.add('show');
+}
+function closePunishmentPicker(){
+  document.getElementById('punishmentOverlay').classList.remove('show');
+  punishmentPickerContext = null;
+}
+
+function punishmentEditorHTML(){
+  const blockRow = `<div class="sched-type-row">
+    <button class="sched-type-btn ${punishmentDraft.blockPoints?'active':''}" data-pun-block="blockPoints">🪙 Points</button>
+    <button class="sched-type-btn ${punishmentDraft.blockMinutes?'active':''}" data-pun-block="blockMinutes">⏰ Time</button>
+    <button class="sched-type-btn ${punishmentDraft.blockPrizes?'active':''}" data-pun-block="blockPrizes">🎁 Prizes</button>
+  </div>`;
+  const unitRow = `<div class="sched-type-row">
+    <button class="sched-type-btn ${punishmentDraft.durationUnit==='hours'?'active':''}" data-pun-unit="hours">Hours</button>
+    <button class="sched-type-btn ${punishmentDraft.durationUnit==='days'?'active':''}" data-pun-unit="days">Days</button>
+  </div>`;
+  return `
+    <div class="sched-sub-label">Reason (optional)</div>
+    <input id="punLabel" class="child-name-input" placeholder="e.g. Backtalk" value="${punishmentDraft.label}">
+    <div class="sched-sub-label">Block what?</div>
+    ${blockRow}
+    <div class="sched-sub-label">For how long?</div>
+    <input id="punDuration" class="settings-input" type="number" min="1" value="${punishmentDraft.durationAmount}" style="width:100%;">
+    ${unitRow}
+  `;
+}
+
+function wirePunishmentEditor(){
+  const labelInp = document.getElementById('punLabel');
+  if(labelInp) labelInp.oninput=()=>{ punishmentDraft.label = labelInp.value; };
+  const durInp = document.getElementById('punDuration');
+  if(durInp) durInp.oninput=()=>{ punishmentDraft.durationAmount = parseInt(durInp.value)||1; };
+  document.querySelectorAll('[data-pun-block]').forEach(b=>{
+    b.onclick=()=>{
+      const field = b.dataset.punBlock;
+      punishmentDraft[field] = !punishmentDraft[field];
+      b.classList.toggle('active');
+    };
+  });
+  document.querySelectorAll('[data-pun-unit]').forEach(b=>{
+    b.onclick=()=>{ punishmentDraft.durationUnit = b.dataset.punUnit; document.getElementById('punishmentPickerBody').innerHTML = punishmentEditorHTML(); wirePunishmentEditor(); };
+  });
+}
+
+async function savePunishment(){
+  const ctx = punishmentPickerContext;
+  if(!ctx || !requireOnline()) return;
+  if(!punishmentDraft.blockPoints && !punishmentDraft.blockMinutes && !punishmentDraft.blockPrizes){ toast('Pick at least one thing to block'); return; }
+  if(!punishmentDraft.durationAmount || punishmentDraft.durationAmount<1){ toast('Enter a duration'); return; }
+  const ms = punishmentDraft.durationAmount * (punishmentDraft.durationUnit==='hours' ? 3600000 : 86400000);
+  const endsAt = Date.now() + ms;
+  const label = punishmentDraft.label.trim() || 'Punishment';
+  closePunishmentPicker();
+  if(ctx.type==='new'){
+    const newPunishment = { id:uid(), label, blockPoints:punishmentDraft.blockPoints, blockMinutes:punishmentDraft.blockMinutes, blockPrizes:punishmentDraft.blockPrizes, endsAt };
+    child.punishments.push(newPunishment);
+    renderParentBody(); render();
+    try{
+      await sb.from('punishments').insert({id:newPunishment.id, child_id:child.id, label:newPunishment.label, block_points:newPunishment.blockPoints, block_minutes:newPunishment.blockMinutes, block_prizes:newPunishment.blockPrizes, ends_at:newPunishment.endsAt}).throwOnError();
+    }catch(err){ handleSyncError(err); }
+  } else {
+    const p = child.punishments.find(x=>x.id===ctx.id);
+    if(!p) return;
+    Object.assign(p, {label, blockPoints:punishmentDraft.blockPoints, blockMinutes:punishmentDraft.blockMinutes, blockPrizes:punishmentDraft.blockPrizes, endsAt});
+    renderParentBody(); render();
+    try{
+      await sb.from('punishments').update({label:p.label, block_points:p.blockPoints, block_minutes:p.blockMinutes, block_prizes:p.blockPrizes, ends_at:p.endsAt}).eq('id', p.id).throwOnError();
     }catch(err){ handleSyncError(err); }
   }
 }
@@ -1348,6 +1490,21 @@ function wireParentBody(){
     openChallengePicker({type:'new'});
   };
 
+  document.querySelectorAll('[data-edit-punishment]').forEach(b=>{
+    b.onclick=()=>openPunishmentPicker({type:'edit', id:b.dataset.editPunishment});
+  });
+  document.querySelectorAll('[data-punishment-del]').forEach(b=>{
+    b.onclick=async ()=>{
+      if(!requireOnline()) return;
+      const id = b.dataset.punishmentDel;
+      child.punishments = child.punishments.filter(p=>p.id!==id);
+      renderParentBody(); render();
+      try{ await sb.from('punishments').delete().eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
+    };
+  });
+  const addPunishmentBtn = document.getElementById('addPunishmentBtn');
+  if(addPunishmentBtn) addPunishmentBtn.onclick=()=>openPunishmentPicker({type:'new'});
+
   document.querySelectorAll('[data-adjust]').forEach(b=>{
     b.onclick=async ()=>{
       if(!requireOnline()) return;
@@ -1482,6 +1639,7 @@ function render(){
   else el.innerHTML = historyHTML();
   wireMainContent();
   updateOfflineBanner();
+  schedulePunishmentExpiry();
 
   if(document.getElementById('parentOverlay').classList.contains('show')){
     renderParentBody();
@@ -1499,6 +1657,23 @@ function renderChildSwitcher(){
   row.querySelectorAll('[data-switch-child]').forEach(b=>{
     b.onclick=()=>switchChild(b.dataset.switchChild);
   });
+}
+
+function activePunishmentsHTML(){
+  const active = activePunishments(child);
+  if(!active.length) return '';
+  const cards = active.map(p=>{
+    const blocks = [p.blockPoints&&'🪙 points', p.blockMinutes&&'⏰ time', p.blockPrizes&&'🎁 prizes'].filter(Boolean).join(' · ');
+    return `
+      <div class="punishment-card">
+        <div class="punishment-label">🚫 ${p.label}</div>
+        <div class="punishment-meta">${blocks} blocked — ${formatRemaining(p.endsAt-Date.now())}</div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="section-title">Active Punishments</div>
+    <div class="punishment-list">${cards}</div>
+  `;
 }
 
 function activeChallengesHTML(){
@@ -1538,6 +1713,7 @@ function homeHTML(){
     } else if(approvedCount+pendingCount>0){
       statusHTML = `<div class="chore-count">${approvedCount+pendingCount}x today</div>`;
     }
+    if(!statusHTML && isChoreBlocked(child, c)){ cls+=' blocked'; statusHTML='<div class="chore-status blocked">🔒 Blocked</div>'; }
     return `
       <button class="${cls}" data-chore="${c.id}">
         ${statusHTML}
@@ -1548,6 +1724,7 @@ function homeHTML(){
   }).join('');
 
   return `
+    ${activePunishmentsHTML()}
     ${activeChallengesHTML()}
     <div class="section-title">Today's Activities</div>
     <div class="grid">${choreCards}</div>
@@ -1558,22 +1735,25 @@ function prizesHTML(){
   if(child.prizes.length===0){
     return `<div class="empty-state"><div class="e">🎁</div>No prizes set up yet.</div>`;
   }
+  const blocked = isBlocked(child, 'blockPrizes');
+  const banner = blocked ? `<div class="punishment-notice">🚫 Prize redemption is paused right now</div>` : '';
   const cards = child.prizes.map(p=>{
     const pending = child.entries.some(e=>e.kind==='redeem' && e.refId===p.id && e.status==='pending');
     const affordable = child.points >= p.cost;
+    const isBlockedNow = blocked && !pending;
     return `
-    <div class="prize-card ${pending?'requested':''}">
+    <div class="prize-card ${pending?'requested':''} ${isBlockedNow?'blocked':''}">
       <div class="prize-emoji">${p.emoji}</div>
       <div class="prize-info">
         <div class="prize-title">${p.label}</div>
         <div class="prize-cost">${p.cost} pts${p.grantsMinutes?` · +${p.grantsMinutes} min`:''}</div>
       </div>
-      <button class="prize-btn ${pending?'requested':''}" data-prize="${p.id}" ${(!affordable && !pending)?'disabled':''}>
-        ${pending ? 'Waiting…' : affordable ? 'Redeem' : 'Need more'}
+      <button class="prize-btn ${pending?'requested':''}" data-prize="${p.id}" ${(isBlockedNow || (!affordable && !pending))?'disabled':''}>
+        ${pending ? 'Waiting…' : isBlockedNow ? 'Blocked 🚫' : affordable ? 'Redeem' : 'Need more'}
       </button>
     </div>`;
   }).join('');
-  return `<div class="prize-list">${cards}</div>`;
+  return `${banner}<div class="prize-list">${cards}</div>`;
 }
 
 function historyItemRowHTML(e){
@@ -1883,6 +2063,9 @@ document.getElementById('scheduleSaveBtn').addEventListener('click', saveSchedul
 document.getElementById('challengeClose').addEventListener('click', closeChallengePicker);
 document.getElementById('challengeOverlay').addEventListener('click', (e)=>{ if(e.target.id==='challengeOverlay') closeChallengePicker(); });
 document.getElementById('challengeSaveBtn').addEventListener('click', saveChallenge);
+document.getElementById('punishmentClose').addEventListener('click', closePunishmentPicker);
+document.getElementById('punishmentOverlay').addEventListener('click', (e)=>{ if(e.target.id==='punishmentOverlay') closePunishmentPicker(); });
+document.getElementById('punishmentSaveBtn').addEventListener('click', savePunishment);
 document.getElementById('undoToastBtn').addEventListener('click', performUndo);
 
 let view = 'home';
@@ -1901,6 +2084,8 @@ let schedulePickerContext = null; // {type:'newChore'|'editChore', id?}
 let scheduleDraft = {type:'daily'};
 let challengePickerContext = null; // {type:'new'|'edit', id?}
 let challengeDraft = {type:'recurring'};
+let punishmentPickerContext = null; // {type:'new'|'edit', id?}
+let punishmentDraft = {durationUnit:'days'};
 let settingsTab = 'profile'; // 'profile' | 'points' | 'manual' | 'data'
 let manualEntryType = null; // null | 'chore' | 'prize'
 

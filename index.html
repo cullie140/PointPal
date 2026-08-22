@@ -139,6 +139,7 @@
   .chore-card:active{transform:scale(.95);}
   .chore-card.done{border-color:var(--success); background:#F2FCF4;}
   .chore-card.pending{border-color:var(--gold); background:#FFFAF0;}
+  .chore-card.blocked{opacity:.45; filter:grayscale(55%); pointer-events:none;}
   .chore-emoji{font-size:30px; line-height:1;}
   .chore-label{font-weight:800; font-size:15px; color:var(--ink);}
   .chore-points{font-size:13px; font-weight:800; color:var(--teal);}
@@ -148,6 +149,7 @@
   }
   .chore-status.pending{background:var(--gold); color:#fff;}
   .chore-status.done{background:var(--success); color:#fff;}
+  .chore-status.blocked{background:var(--danger); color:#fff;}
   .chore-count{
     position:absolute; bottom:10px; right:10px; font-size:12px; font-weight:800; color:var(--ink-soft);
     background:var(--bg); padding:2px 8px; border-radius:20px;
@@ -167,6 +169,19 @@
   .challenge-progress{font-size:12.5px; color:var(--ink-soft); font-weight:700; margin-top:2px;}
   .challenge-days{font-size:11px; font-weight:800; color:var(--ink-soft); white-space:nowrap;}
 
+  .punishment-list{display:flex; flex-direction:column; gap:10px;}
+  .punishment-card{
+    background: linear-gradient(135deg, #FFE3E3 0%, #FFEDED 100%);
+    border-radius:var(--radius-md); padding:14px 16px; box-shadow:var(--shadow-sm);
+    border:2px solid var(--danger);
+  }
+  .punishment-label{font-weight:800; font-size:14.5px; color:var(--danger);}
+  .punishment-meta{font-size:12.5px; color:var(--ink-soft); font-weight:700; margin-top:2px;}
+  .punishment-notice{
+    background:#FFEDED; color:var(--danger); font-weight:800; font-size:13px;
+    padding:10px 14px; border-radius:var(--radius-md); margin-bottom:12px;
+  }
+
   /* PRIZES */
   .prize-list{display:flex; flex-direction:column; gap:12px;}
   .prize-card{
@@ -177,6 +192,7 @@
   }
   .prize-card:active{transform:scale(.97);}
   .prize-card.requested{border-color:var(--gold); background:#FFFAF0;}
+  .prize-card.blocked{opacity:.5; filter:grayscale(55%);}
   .prize-emoji{font-size:32px; width:48px; text-align:center;}
   .prize-info{flex:1;}
   .prize-title{font-weight:800; font-size:15px;}
@@ -590,6 +606,7 @@
       <button class="tab-btn" data-ptab="chores">Activities</button>
       <button class="tab-btn" data-ptab="prizes">Prizes</button>
       <button class="tab-btn" data-ptab="challenges">Challenges</button>
+      <button class="tab-btn" data-ptab="punishments">Punishments</button>
       <button class="tab-btn" data-ptab="settings">Settings</button>
     </div>
     <div id="parentBody"></div>
@@ -636,6 +653,17 @@
     <div id="challengePickerBody"></div>
     <button class="btn btn-primary" id="challengeSaveBtn" style="margin-top:14px;">Save Challenge</button>
     <button class="btn btn-ghost" id="challengeClose">Close</button>
+  </div>
+</div>
+
+<!-- PUNISHMENT PICKER OVERLAY -->
+<div class="overlay" id="punishmentOverlay">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Punishment</div>
+    <div id="punishmentPickerBody"></div>
+    <button class="btn btn-primary" id="punishmentSaveBtn" style="margin-top:14px;">Save Punishment</button>
+    <button class="btn btn-ghost" id="punishmentClose">Close</button>
   </div>
 </div>
 
