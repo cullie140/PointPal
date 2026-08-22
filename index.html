@@ -292,9 +292,11 @@
   .navbar{
     position:fixed; bottom:0; left:0; right:0;
     max-width:560px; margin:0 auto;
-    background:#fff; border-top:1px solid #EAEFF1;
+    background:rgba(255,255,255,0.78); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(234,239,241,0.8);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     display:flex; padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
-    box-shadow: 0 -4px 16px rgba(11,37,48,0.06);
+    box-shadow: 0 -6px 20px rgba(11,37,48,0.09);
   }
   .nav-btn{
     flex:1; background:none; border:none; display:flex; flex-direction:column;
