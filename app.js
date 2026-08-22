@@ -40,6 +40,7 @@ function makeChild(id, name){
     points: 0,
     minutes: 0,
     weekStart: null,          // ISO date (Monday) this week's streak is counted against
+    goalPrizeId: null,        // prize the child has pinned as their savings goal
     chores: structuredClone(DEFAULT_CHORES),
     prizes: structuredClone(DEFAULT_PRIZES),
     challenges: structuredClone(DEFAULT_CHALLENGES),
@@ -83,8 +84,9 @@ function rowsToChild(childRow, chores, prizes, challenges, punishments, entries)
     points: childRow.points,
     minutes: childRow.minutes,
     weekStart: childRow.week_start,
+    goalPrizeId: childRow.goal_prize_id || null,
     chores: chores.filter(c=>c.child_id===childRow.id).map(c=>({id:c.id, label:c.label, emoji:c.emoji, amount:c.amount, currency:c.currency, repeatable:c.repeatable, schedule:c.schedule||undefined})),
-    prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, grantsMinutes:p.grants_minutes||undefined})),
+    prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, grantsMinutes:p.grants_minutes||undefined, limitMax:p.limit_max||undefined, limitPeriod:p.limit_period||undefined})),
     challenges: challenges.filter(ch=>ch.child_id===childRow.id).map(ch=>({id:ch.id, choreId:ch.chore_id, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, startDate:ch.start_date||undefined, endDate:ch.end_date||undefined})),
     punishments: punishments.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, blockPoints:p.block_points, blockMinutes:p.block_minutes, blockPrizes:p.block_prizes, endsAt:Number(p.ends_at)})),
     entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status, grantsMinutes:e.grants_minutes||undefined}))
@@ -93,7 +95,7 @@ function rowsToChild(childRow, chores, prizes, challenges, punishments, entries)
 async function insertChildFull(c){
   await sb.from('children').insert({id:c.id, name:c.name, points:c.points, minutes:c.minutes, week_start:c.weekStart}).throwOnError();
   if(c.chores.length) await sb.from('chores').insert(c.chores.map(ch=>({id:ch.id, child_id:c.id, label:ch.label, emoji:ch.emoji, amount:ch.amount, currency:ch.currency, repeatable:ch.repeatable, schedule:ch.schedule||null}))).throwOnError();
-  if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null}))).throwOnError();
+  if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null, limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}))).throwOnError();
   if(c.challenges.length) await sb.from('challenges').insert(c.challenges.map(ch=>({id:ch.id, child_id:c.id, chore_id:ch.choreId, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, start_date:ch.startDate||null, end_date:ch.endDate||null}))).throwOnError();
   if(c.punishments.length) await sb.from('punishments').insert(c.punishments.map(p=>({id:p.id, child_id:c.id, label:p.label, block_points:p.blockPoints, block_minutes:p.blockMinutes, block_prizes:p.blockPrizes, ends_at:p.endsAt}))).throwOnError();
 }
@@ -335,6 +337,18 @@ function schedulePunishmentExpiry(){
   punishmentExpiryTimer = setTimeout(render, Math.max(0, soonest-Date.now())+250);
 }
 
+/* ---------- prize stock limits ---------- */
+function redeemCountInPeriod(c, prizeId, period){
+  const inWindow = period==='week'
+    ? e => weekKeyFor(new Date(e.ts))===weekKeyFor(new Date())
+    : e => dateKey(new Date(e.ts))===todayKey();
+  return c.entries.filter(e=>e.kind==='redeem' && e.refId===prizeId && e.status!=='denied' && inWindow(e)).length;
+}
+function isPrizeLimitReached(c, prize){
+  if(!prize.limitMax) return false;
+  return redeemCountInPeriod(c, prize.id, prize.limitPeriod||'day') >= prize.limitMax;
+}
+
 function pendingEntries(){
   const all = [];
   state.children.forEach(c=>{
@@ -439,6 +453,7 @@ async function requestPrize(prizeId, evt){
   const prize = child.prizes.find(p=>p.id===prizeId);
   if(!prize) return;
   if(isBlocked(child, 'blockPrizes')){ toast('🚫 Prize redemption is paused right now'); return; }
+  if(isPrizeLimitReached(child, prize)){ toast(`🚫 ${prize.label} limit reached for this ${prize.limitPeriod||'day'}`); return; }
   const already = child.entries.some(e=>e.kind==='redeem' && e.refId===prizeId && e.status==='pending');
   if(already){ toast('Already waiting on approval for that one!'); return; }
   const entry = {
@@ -449,8 +464,22 @@ async function requestPrize(prizeId, evt){
   child.entries.push(entry);
   spawnFloaterAt(evt, `Requested!`, 'var(--coral-deep)');
   toast(`Asked to redeem "${prize.label}" 🙋`);
+  const clearedGoal = child.goalPrizeId===prizeId;
+  if(clearedGoal) child.goalPrizeId = null;
   render();
-  try{ await sb.from('entries').insert(toEntryRow(entry, child.id)).throwOnError(); }catch(err){ handleSyncError(err); }
+  try{
+    await sb.from('entries').insert(toEntryRow(entry, child.id)).throwOnError();
+    if(clearedGoal) await sb.from('children').update({goal_prize_id:null}).eq('id', child.id).throwOnError();
+  }catch(err){ handleSyncError(err); }
+}
+
+async function toggleSavingsGoal(prizeId){
+  if(!requireOnline()) return;
+  const prize = child.prizes.find(p=>p.id===prizeId);
+  if(!prize) return;
+  child.goalPrizeId = child.goalPrizeId===prizeId ? null : prizeId;
+  render();
+  try{ await sb.from('children').update({goal_prize_id: child.goalPrizeId}).eq('id', child.id).throwOnError(); }catch(err){ handleSyncError(err); }
 }
 
 async function approveEntry(id, opts){
@@ -861,17 +890,21 @@ function parentPrizesHTML(){
       <input class="settings-input label-edit" data-prize-label="${p.id}" value="${p.label}">
       <input class="settings-input" type="number" min="0" data-prize-minutes="${p.id}" value="${p.grantsMinutes||0}" title="Bonus minutes granted" style="width:56px;">
       <input class="settings-input" type="number" min="0" data-prize-cost="${p.id}" value="${p.cost}">
+      <input class="settings-input" type="number" min="0" data-prize-limit-max="${p.id}" value="${p.limitMax||''}" placeholder="limit" style="width:64px;" title="Max redemptions per period (blank = no limit)">
+      <button class="icon-btn-sm currency-toggle" data-prize-limit-period="${p.id}" title="Limit period">${p.limitPeriod==='week'?'/Wk':'/Day'}</button>
       <button class="icon-btn-sm" data-prize-del="${p.id}">Remove</button>
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Editing <b>${child.name}</b>'s prizes. Names, costs, bonus minutes, and icons all update live.</div>
+    <div class="sheet-sub">Editing <b>${child.name}</b>'s prizes. Names, costs, bonus minutes, and icons all update live. Set a redemption limit to cap how often a prize can be redeemed per day or week — leave it blank for no limit.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
       <button class="icon-swatch" id="newPrizeIconBtn" style="margin-top:10px;">${pendingPrizeIcon}</button>
       <input id="newPrizeLabel" class="child-name-input" placeholder="New prize name" style="flex:1; margin-top:10px;">
       <input id="newPrizeCost" class="settings-input" type="number" placeholder="cost" style="margin-top:8px;">
       <input id="newPrizeMinutes" class="settings-input" type="number" placeholder="min" style="margin-top:8px;" title="Minutes granted (optional)">
+      <input id="newPrizeLimitMax" class="settings-input" type="number" placeholder="limit" style="margin-top:8px;" title="Max redemptions per period (optional)">
+      <button class="icon-btn-sm currency-toggle" id="newPrizeLimitPeriodBtn" style="margin-top:8px;">${pendingPrizeLimitPeriod==='week'?'/Wk':'/Day'}</button>
       <button class="btn btn-primary" id="addPrizeBtn" style="margin-top:8px;">Add Prize</button>
     </div>
   `;
@@ -1444,6 +1477,27 @@ function wireParentBody(){
       try{ await sb.from('prizes').update({cost:p.cost}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
+  document.querySelectorAll('[data-prize-limit-max]').forEach(inp=>{
+    inp.onchange=async ()=>{
+      const p = child.prizes.find(x=>x.id===inp.dataset.prizeLimitMax);
+      if(!p || !requireOnline()) return;
+      const val = parseInt(inp.value);
+      p.limitMax = val>0 ? val : undefined;
+      if(p.limitMax && !p.limitPeriod) p.limitPeriod = 'day';
+      render();
+      try{ await sb.from('prizes').update({limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
+    };
+  });
+  document.querySelectorAll('[data-prize-limit-period]').forEach(b=>{
+    b.onclick=async ()=>{
+      const p = child.prizes.find(x=>x.id===b.dataset.prizeLimitPeriod);
+      if(!p || !requireOnline()) return;
+      p.limitPeriod = p.limitPeriod==='week' ? 'day' : 'week';
+      b.textContent = p.limitPeriod==='week' ? '/Wk' : '/Day';
+      render();
+      try{ await sb.from('prizes').update({limit_period:p.limitPeriod}).eq('id', p.id).throwOnError(); }catch(err){ handleSyncError(err); }
+    };
+  });
   document.querySelectorAll('[data-prize-del]').forEach(b=>{
     b.onclick=async ()=>{
       if(!requireOnline()) return;
@@ -1458,18 +1512,25 @@ function wireParentBody(){
   });
   const newPrizeIconBtn = document.getElementById('newPrizeIconBtn');
   if(newPrizeIconBtn) newPrizeIconBtn.onclick=()=>openIconPicker({type:'newPrize'});
+  const newPrizeLimitPeriodBtn = document.getElementById('newPrizeLimitPeriodBtn');
+  if(newPrizeLimitPeriodBtn) newPrizeLimitPeriodBtn.onclick=()=>{
+    pendingPrizeLimitPeriod = pendingPrizeLimitPeriod==='week' ? 'day' : 'week';
+    newPrizeLimitPeriodBtn.textContent = pendingPrizeLimitPeriod==='week' ? '/Wk' : '/Day';
+  };
   const addPrizeBtn = document.getElementById('addPrizeBtn');
   if(addPrizeBtn) addPrizeBtn.onclick=async ()=>{
     if(!requireOnline()) return;
     const label = document.getElementById('newPrizeLabel').value.trim();
     const cost = parseInt(document.getElementById('newPrizeCost').value)||0;
     const mins = parseInt(document.getElementById('newPrizeMinutes').value)||0;
+    const limitMax = parseInt(document.getElementById('newPrizeLimitMax').value)||0;
     if(!label) return;
-    const newPrize = {id:uid(), label, emoji:pendingPrizeIcon, cost, grantsMinutes:mins||undefined};
+    const newPrize = {id:uid(), label, emoji:pendingPrizeIcon, cost, grantsMinutes:mins||undefined, limitMax:limitMax>0?limitMax:undefined, limitPeriod:limitMax>0?pendingPrizeLimitPeriod:undefined};
     child.prizes.push(newPrize);
     pendingPrizeIcon = '🎁';
+    pendingPrizeLimitPeriod = 'day';
     renderParentBody(); render();
-    try{ await sb.from('prizes').insert({id:newPrize.id, child_id:child.id, label:newPrize.label, emoji:newPrize.emoji, cost:newPrize.cost, grants_minutes:newPrize.grantsMinutes||null}).throwOnError(); }catch(err){ handleSyncError(err); }
+    try{ await sb.from('prizes').insert({id:newPrize.id, child_id:child.id, label:newPrize.label, emoji:newPrize.emoji, cost:newPrize.cost, grants_minutes:newPrize.grantsMinutes||null, limit_max:newPrize.limitMax||null, limit_period:newPrize.limitPeriod||null}).throwOnError(); }catch(err){ handleSyncError(err); }
   };
 
   document.querySelectorAll('[data-edit-challenge]').forEach(b=>{
@@ -1604,9 +1665,10 @@ function wireParentBody(){
         await sb.from('chores').delete().eq('child_id', fresh.id).throwOnError();
         await sb.from('prizes').delete().eq('child_id', fresh.id).throwOnError();
         await sb.from('challenges').delete().eq('child_id', fresh.id).throwOnError();
-        await sb.from('children').update({points:0, minutes:0, week_start: fresh.weekStart}).eq('id', fresh.id).throwOnError();
+        await sb.from('punishments').delete().eq('child_id', fresh.id).throwOnError();
+        await sb.from('children').update({points:0, minutes:0, week_start: fresh.weekStart, goal_prize_id: null}).eq('id', fresh.id).throwOnError();
         await sb.from('chores').insert(fresh.chores.map(c=>({id:c.id, child_id:fresh.id, label:c.label, emoji:c.emoji, amount:c.amount, currency:c.currency, repeatable:c.repeatable, schedule:c.schedule||null}))).throwOnError();
-        await sb.from('prizes').insert(fresh.prizes.map(p=>({id:p.id, child_id:fresh.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null}))).throwOnError();
+        await sb.from('prizes').insert(fresh.prizes.map(p=>({id:p.id, child_id:fresh.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null, limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}))).throwOnError();
         await sb.from('challenges').insert(fresh.challenges.map(ch=>({id:ch.id, child_id:fresh.id, chore_id:ch.choreId, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, start_date:ch.startDate||null, end_date:ch.endDate||null}))).throwOnError();
       }catch(err){ handleSyncError(err); }
     }
@@ -1657,6 +1719,26 @@ function renderChildSwitcher(){
   row.querySelectorAll('[data-switch-child]').forEach(b=>{
     b.onclick=()=>switchChild(b.dataset.switchChild);
   });
+}
+
+function savingsGoalHTML(){
+  const goal = child.prizes.find(p=>p.id===child.goalPrizeId);
+  if(!goal) return '';
+  const pct = Math.max(4, Math.min(100, Math.round(child.points/goal.cost*100)));
+  const met = child.points >= goal.cost;
+  return `
+    <div class="section-title">Savings Goal</div>
+    <div class="goal-card">
+      <div class="goal-top">
+        <div class="goal-emoji">${goal.emoji}</div>
+        <div class="goal-info">
+          <div class="goal-title">${goal.label}</div>
+          <div class="goal-sub">${child.points}/${goal.cost} pts${met?' · Ready! 🎉':''}</div>
+        </div>
+      </div>
+      <div class="goal-track"><div class="goal-fill" style="width:${pct}%"></div></div>
+    </div>
+  `;
 }
 
 function activePunishmentsHTML(){
@@ -1724,6 +1806,7 @@ function homeHTML(){
   }).join('');
 
   return `
+    ${savingsGoalHTML()}
     ${activePunishmentsHTML()}
     ${activeChallengesHTML()}
     <div class="section-title">Today's Activities</div>
@@ -1741,15 +1824,19 @@ function prizesHTML(){
     const pending = child.entries.some(e=>e.kind==='redeem' && e.refId===p.id && e.status==='pending');
     const affordable = child.points >= p.cost;
     const isBlockedNow = blocked && !pending;
+    const limitReached = !pending && isPrizeLimitReached(child, p);
+    const limitText = p.limitMax ? ` · ${redeemCountInPeriod(child, p.id, p.limitPeriod||'day')}/${p.limitMax} per ${p.limitPeriod==='week'?'wk':'day'}` : '';
+    const isGoal = child.goalPrizeId===p.id;
     return `
-    <div class="prize-card ${pending?'requested':''} ${isBlockedNow?'blocked':''}">
+    <div class="prize-card ${pending?'requested':''} ${(isBlockedNow||limitReached)?'blocked':''}">
       <div class="prize-emoji">${p.emoji}</div>
       <div class="prize-info">
         <div class="prize-title">${p.label}</div>
-        <div class="prize-cost">${p.cost} pts${p.grantsMinutes?` · +${p.grantsMinutes} min`:''}</div>
+        <div class="prize-cost">${p.cost} pts${p.grantsMinutes?` · +${p.grantsMinutes} min`:''}${limitText}</div>
       </div>
-      <button class="prize-btn ${pending?'requested':''}" data-prize="${p.id}" ${(isBlockedNow || (!affordable && !pending))?'disabled':''}>
-        ${pending ? 'Waiting…' : isBlockedNow ? 'Blocked 🚫' : affordable ? 'Redeem' : 'Need more'}
+      <button class="goal-toggle-btn ${isGoal?'active':''}" data-goal-toggle="${p.id}" title="${isGoal?'Remove as savings goal':'Set as savings goal'}">🎯</button>
+      <button class="prize-btn ${pending?'requested':''}" data-prize="${p.id}" ${(isBlockedNow || limitReached || (!affordable && !pending))?'disabled':''}>
+        ${pending ? 'Waiting…' : isBlockedNow ? 'Blocked 🚫' : limitReached ? 'Limit Reached' : affordable ? 'Redeem' : 'Need more'}
       </button>
     </div>`;
   }).join('');
@@ -1889,6 +1976,9 @@ function wireMainContent(){
   });
   document.querySelectorAll('[data-prize]').forEach(b=>{
     b.onclick=(ev)=>requestPrize(b.dataset.prize, ev);
+  });
+  document.querySelectorAll('[data-goal-toggle]').forEach(b=>{
+    b.onclick=()=>toggleSavingsGoal(b.dataset.goalToggle);
   });
 
   document.querySelectorAll('[data-hmode]').forEach(b=>{
@@ -2077,6 +2167,7 @@ let historyWeekOffset = 0;    // 0 = this week, -1 = last week, ...
 let historyMonthOffset = 0;   // 0 = this month, -1 = last month, ...
 let pendingChoreIcon = '⭐';
 let pendingPrizeIcon = '🎁';
+let pendingPrizeLimitPeriod = 'day';
 let pendingChoreSchedule = {type:'daily'};
 let pendingChoreCurrency = 'points';
 let iconPickerContext = null; // {type:'newChore'|'newPrize'|'editChore'|'editPrize', id?}

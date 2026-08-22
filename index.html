@@ -182,6 +182,18 @@
     padding:10px 14px; border-radius:var(--radius-md); margin-bottom:12px;
   }
 
+  .goal-card{
+    background: linear-gradient(135deg, #E3F7F4 0%, #C9EFE8 100%);
+    border-radius:var(--radius-md); padding:14px 16px; box-shadow:var(--shadow-sm);
+  }
+  .goal-top{display:flex; align-items:center; gap:14px; margin-bottom:10px;}
+  .goal-emoji{font-size:30px; flex-shrink:0;}
+  .goal-info{flex:1; min-width:0;}
+  .goal-title{font-weight:800; font-size:14.5px; color:var(--ink);}
+  .goal-sub{font-size:12.5px; color:var(--ink-soft); font-weight:700; margin-top:2px;}
+  .goal-track{height:10px; border-radius:6px; background:rgba(255,255,255,.6); overflow:hidden;}
+  .goal-fill{height:100%; background:var(--teal); border-radius:6px; transition:width 300ms ease;}
+
   /* PRIZES */
   .prize-list{display:flex; flex-direction:column; gap:12px;}
   .prize-card{
@@ -203,6 +215,11 @@
   }
   .prize-btn:disabled{background:#D8E2E6; color:#93A5AC;}
   .prize-btn.requested{background:var(--gold);}
+  .goal-toggle-btn{
+    background:var(--bg); border:none; border-radius:50%; width:36px; height:36px;
+    font-size:16px; flex-shrink:0; opacity:.4;
+  }
+  .goal-toggle-btn.active{opacity:1; background:#E3F7F4;}
 
   /* HISTORY */
   .history-item{
