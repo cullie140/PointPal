@@ -1808,7 +1808,7 @@ function wireParentBody(){
 /* ============ RENDER: main views ============ */
 function render(){
   ensureWeek(child);
-  document.getElementById('greetingName').textContent = `Hey, ${child.avatar} ${child.name}! 👋`;
+  document.getElementById('greetingName').textContent = `Hey, ${child.avatar} ${child.name}!`;
   document.getElementById('dateLine').textContent = new Date().toLocaleDateString(undefined,{weekday:'long', month:'short', day:'numeric'});
   document.getElementById('pointsVal').textContent = child.points;
   document.getElementById('minutesVal').textContent = child.minutes;
