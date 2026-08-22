@@ -92,6 +92,16 @@ function switchChild(id){
   render();
 }
 
+function bySortOrder(a, b){
+  const ao = a.sortOrder==null ? Infinity : a.sortOrder;
+  const bo = b.sortOrder==null ? Infinity : b.sortOrder;
+  if(ao!==bo) return ao-bo;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+function nextSortOrder(list){
+  return 1 + list.reduce((max,x)=>Math.max(max, x.sortOrder==null?-1:x.sortOrder), -1);
+}
+
 /* ---------- row <-> app shape converters ---------- */
 function toEntryRow(entry, childId){
   return {
@@ -111,8 +121,8 @@ function rowsToChild(childRow, chores, prizes, challenges, punishments, entries)
     minutes: childRow.minutes,
     weekStart: childRow.week_start,
     goalPrizeId: childRow.goal_prize_id || null,
-    chores: chores.filter(c=>c.child_id===childRow.id).map(c=>({id:c.id, label:c.label, emoji:c.emoji, amount:c.amount, currency:c.currency, repeatable:c.repeatable, schedule:c.schedule||undefined})),
-    prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, grantsMinutes:p.grants_minutes||undefined, limitMax:p.limit_max||undefined, limitPeriod:p.limit_period||undefined})),
+    chores: chores.filter(c=>c.child_id===childRow.id).map(c=>({id:c.id, label:c.label, emoji:c.emoji, amount:c.amount, currency:c.currency, repeatable:c.repeatable, schedule:c.schedule||undefined, sortOrder:c.sort_order==null?null:Number(c.sort_order)})).sort(bySortOrder),
+    prizes: prizes.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, emoji:p.emoji, cost:p.cost, grantsMinutes:p.grants_minutes||undefined, limitMax:p.limit_max||undefined, limitPeriod:p.limit_period||undefined, sortOrder:p.sort_order==null?null:Number(p.sort_order)})).sort(bySortOrder),
     challenges: challenges.filter(ch=>ch.child_id===childRow.id).map(ch=>({id:ch.id, choreId:ch.chore_id, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, startDate:ch.start_date||undefined, endDate:ch.end_date||undefined})),
     punishments: punishments.filter(p=>p.child_id===childRow.id).map(p=>({id:p.id, label:p.label, blockPoints:p.block_points, blockMinutes:p.block_minutes, blockPrizes:p.block_prizes, endsAt:Number(p.ends_at)})),
     entries: entries.filter(e=>e.child_id===childRow.id).map(e=>({id:e.id, ts:Number(e.ts), kind:e.kind, refId:e.ref_id, label:e.label, emoji:e.emoji, currency:e.currency, amount:e.amount, status:e.status, fulfilled:!!e.fulfilled, minutesUsed:Number(e.minutes_used)||0, grantsMinutes:Number(e.grants_minutes)||0}))
@@ -120,8 +130,8 @@ function rowsToChild(childRow, chores, prizes, challenges, punishments, entries)
 }
 async function insertChildFull(c){
   await sb.from('children').insert({id:c.id, name:c.name, avatar:c.avatar, pin:c.pin, points:c.points, minutes:c.minutes, week_start:c.weekStart}).throwOnError();
-  if(c.chores.length) await sb.from('chores').insert(c.chores.map(ch=>({id:ch.id, child_id:c.id, label:ch.label, emoji:ch.emoji, amount:ch.amount, currency:ch.currency, repeatable:ch.repeatable, schedule:ch.schedule||null}))).throwOnError();
-  if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map(p=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null, limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}))).throwOnError();
+  if(c.chores.length) await sb.from('chores').insert(c.chores.map((ch,i)=>({id:ch.id, child_id:c.id, label:ch.label, emoji:ch.emoji, amount:ch.amount, currency:ch.currency, repeatable:ch.repeatable, schedule:ch.schedule||null, sort_order:i}))).throwOnError();
+  if(c.prizes.length) await sb.from('prizes').insert(c.prizes.map((p,i)=>({id:p.id, child_id:c.id, label:p.label, emoji:p.emoji, cost:p.cost, grants_minutes:p.grantsMinutes||null, limit_max:p.limitMax||null, limit_period:p.limitPeriod||null, sort_order:i}))).throwOnError();
   if(c.challenges.length) await sb.from('challenges').insert(c.challenges.map(ch=>({id:ch.id, child_id:c.id, chore_id:ch.choreId, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, start_date:ch.startDate||null, end_date:ch.endDate||null}))).throwOnError();
   if(c.punishments.length) await sb.from('punishments').insert(c.punishments.map(p=>({id:p.id, child_id:c.id, label:p.label, block_points:p.blockPoints, block_minutes:p.blockMinutes, block_prizes:p.blockPrizes, ends_at:p.endsAt}))).throwOnError();
 }
@@ -944,8 +954,9 @@ function parentApproveHTML(){
 
 function parentChoresHTML(){
   const rows = child.chores.map(c=>`
-    <div class="list-edit-item">
+    <div class="list-edit-item" data-reorder-id="${c.id}">
       <div class="item-row-main">
+        <button class="drag-handle" data-drag-handle>⠿</button>
         <button class="icon-swatch" data-edit-chore-icon="${c.id}">${c.emoji}</button>
         <input class="label-edit" data-chore-label="${c.id}" value="${c.label}">
         <button class="icon-btn-sm" data-chore-del="${c.id}">Remove</button>
@@ -961,8 +972,8 @@ function parentChoresHTML(){
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Editing <b>${child.name}</b>'s activities. Names, amounts, icons, and schedules all update live. Removing an activity doesn't erase past history.</div>
-    ${rows}
+    <div class="sheet-sub">Editing <b>${child.name}</b>'s activities. Names, amounts, icons, and schedules all update live. Drag ⠿ to reorder — that's the order shown on Home. Removing an activity doesn't erase past history.</div>
+    <div class="reorder-list" id="choreReorderList">${rows}</div>
     <div class="list-edit-item" style="border-bottom:none;">
       <div class="item-row-main" style="margin-top:10px;">
         <button class="icon-swatch" id="newChoreIconBtn">${pendingChoreIcon}</button>
@@ -1035,8 +1046,9 @@ function parentPunishmentsHTML(){
 
 function parentPrizesHTML(){
   const rows = child.prizes.map(p=>`
-    <div class="list-edit-item">
+    <div class="list-edit-item" data-reorder-id="${p.id}">
       <div class="item-row-main">
+        <button class="drag-handle" data-drag-handle>⠿</button>
         <button class="icon-swatch" data-edit-prize-icon="${p.id}">${p.emoji}</button>
         <input class="label-edit" data-prize-label="${p.id}" value="${p.label}">
         <button class="icon-btn-sm" data-prize-del="${p.id}">Remove</button>
@@ -1049,8 +1061,8 @@ function parentPrizesHTML(){
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Editing <b>${child.name}</b>'s prizes. Names, costs, and icons all update live. "min" is optional — set it for screen-time prizes so marking a redemption Delivered also credits that many minutes. The 🔁 pill sets an optional redemption limit — cap how often a prize can be redeemed per day or week.</div>
-    ${rows}
+    <div class="sheet-sub">Editing <b>${child.name}</b>'s prizes. Names, costs, and icons all update live. Drag ⠿ to reorder — that's the order shown in Prizes. "min" is optional — set it for screen-time prizes so marking a redemption Delivered also credits that many minutes. The 🔁 pill sets an optional redemption limit — cap how often a prize can be redeemed per day or week.</div>
+    <div class="reorder-list" id="prizeReorderList">${rows}</div>
     <div class="list-edit-item" style="border-bottom:none;">
       <div class="item-row-main" style="margin-top:10px;">
         <button class="icon-swatch" id="newPrizeIconBtn">${pendingPrizeIcon}</button>
@@ -1609,12 +1621,86 @@ function settingsDataHTML(){
   `;
 }
 
+/* ============ DRAG-TO-REORDER ============ */
+function wireDragReorder(containerEl, onReordered){
+  if(!containerEl || containerEl.dataset.reorderWired) return;
+  containerEl.dataset.reorderWired = '1';
+  let dragEl = null, pointerId = null, offsetY = 0;
+
+  function rows(){ return Array.from(containerEl.querySelectorAll(':scope > [data-reorder-id]')); }
+
+  function onPointerMove(e){
+    if(!dragEl || e.pointerId!==pointerId) return;
+    e.preventDefault();
+    const others = rows().filter(r=>r!==dragEl);
+    const pointerY = e.clientY;
+    let target = null, placeBefore = true;
+    for(const row of others){
+      const r = row.getBoundingClientRect();
+      if(pointerY < r.top + r.height/2){ target = row; placeBefore = true; break; }
+    }
+    if(!target && others.length){ target = others[others.length-1]; placeBefore = false; }
+    if(target){
+      const beforeNode = placeBefore ? target : target.nextSibling;
+      if(dragEl.nextSibling !== beforeNode) containerEl.insertBefore(dragEl, beforeNode);
+    }
+    dragEl.style.transform = 'none';
+    const natural = dragEl.getBoundingClientRect().top;
+    dragEl.style.transform = `translateY(${pointerY - offsetY - natural}px)`;
+  }
+
+  function onPointerUp(e){
+    if(!dragEl || e.pointerId!==pointerId) return;
+    document.removeEventListener('pointermove', onPointerMove);
+    document.removeEventListener('pointerup', onPointerUp);
+    dragEl.classList.remove('dragging');
+    dragEl.style.transform = '';
+    dragEl.style.position = '';
+    dragEl.style.zIndex = '';
+    const finishedEl = dragEl;
+    dragEl = null; pointerId = null;
+    onReordered(rows().map(r=>r.dataset.reorderId));
+    void finishedEl;
+  }
+
+  containerEl.addEventListener('pointerdown', (e)=>{
+    const handle = e.target.closest('[data-drag-handle]');
+    if(!handle) return;
+    const row = handle.closest('[data-reorder-id]');
+    if(!row) return;
+    e.preventDefault();
+    dragEl = row; pointerId = e.pointerId;
+    const rect = row.getBoundingClientRect();
+    offsetY = e.clientY - rect.top;
+    row.classList.add('dragging');
+    row.style.position = 'relative';
+    row.style.zIndex = '10';
+    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointerup', onPointerUp);
+  });
+}
+
+async function persistSortOrder(kind, list, orderedIds){
+  const byId = new Map(list.map(x=>[x.id, x]));
+  orderedIds.forEach((id, i)=>{ const item = byId.get(id); if(item) item.sortOrder = i; });
+  list.sort(bySortOrder);
+  render();
+  try{
+    await Promise.all(orderedIds.map((id, i)=>sb.from(kind).update({sort_order:i}).eq('id', id).throwOnError()));
+  }catch(err){ handleSyncError(err); }
+}
+
 function wireParentBody(){
   document.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>approveEntry(b.dataset.approve));
   document.querySelectorAll('[data-deny]').forEach(b=>b.onclick=()=>denyEntry(b.dataset.deny));
   document.querySelectorAll('[data-fulfill]').forEach(b=>b.onclick=()=>markFulfilled(b.dataset.fulfill));
   const bulkApproveBtn = document.getElementById('bulkApproveBtn');
   if(bulkApproveBtn) bulkApproveBtn.onclick=()=>bulkApproveAll();
+
+  const choreReorderList = document.getElementById('choreReorderList');
+  if(choreReorderList) wireDragReorder(choreReorderList, (ids)=>persistSortOrder('chores', child.chores, ids));
+  const prizeReorderList = document.getElementById('prizeReorderList');
+  if(prizeReorderList) wireDragReorder(prizeReorderList, (ids)=>persistSortOrder('prizes', child.prizes, ids));
 
   document.querySelectorAll('[data-chore-label]').forEach(inp=>{
     inp.onchange=async ()=>{
@@ -1685,13 +1771,13 @@ function wireParentBody(){
     const amount = parseInt(document.getElementById('newChoreAmount').value)||0;
     const rep = document.getElementById('newChoreRepeat').checked;
     if(!label) return;
-    const newChore = {id:uid(), label, emoji:pendingChoreIcon, amount, currency:pendingChoreCurrency, repeatable:rep, schedule:pendingChoreSchedule};
+    const newChore = {id:uid(), label, emoji:pendingChoreIcon, amount, currency:pendingChoreCurrency, repeatable:rep, schedule:pendingChoreSchedule, sortOrder:nextSortOrder(child.chores)};
     child.chores.push(newChore);
     pendingChoreIcon = '⭐';
     pendingChoreSchedule = {type:'daily'};
     pendingChoreCurrency = 'points';
     renderParentBody(); render();
-    try{ await sb.from('chores').insert({id:newChore.id, child_id:child.id, label:newChore.label, emoji:newChore.emoji, amount:newChore.amount, currency:newChore.currency, repeatable:newChore.repeatable, schedule:newChore.schedule}).throwOnError(); }catch(err){ handleSyncError(err); }
+    try{ await sb.from('chores').insert({id:newChore.id, child_id:child.id, label:newChore.label, emoji:newChore.emoji, amount:newChore.amount, currency:newChore.currency, repeatable:newChore.repeatable, schedule:newChore.schedule, sort_order:newChore.sortOrder}).throwOnError(); }catch(err){ handleSyncError(err); }
   };
 
   document.querySelectorAll('[data-prize-label]').forEach(inp=>{
@@ -1748,12 +1834,12 @@ function wireParentBody(){
     const cost = parseInt(document.getElementById('newPrizeCost').value)||0;
     const grantsMinutes = parseInt(document.getElementById('newPrizeMinutes').value)||0;
     if(!label) return;
-    const newPrize = {id:uid(), label, emoji:pendingPrizeIcon, cost, grantsMinutes, limitMax:pendingPrizeLimit.max, limitPeriod:pendingPrizeLimit.period};
+    const newPrize = {id:uid(), label, emoji:pendingPrizeIcon, cost, grantsMinutes, limitMax:pendingPrizeLimit.max, limitPeriod:pendingPrizeLimit.period, sortOrder:nextSortOrder(child.prizes)};
     child.prizes.push(newPrize);
     pendingPrizeIcon = '🎁';
     pendingPrizeLimit = {max:undefined, period:'day'};
     renderParentBody(); render();
-    try{ await sb.from('prizes').insert({id:newPrize.id, child_id:child.id, label:newPrize.label, emoji:newPrize.emoji, cost:newPrize.cost, grants_minutes:newPrize.grantsMinutes||null, limit_max:newPrize.limitMax||null, limit_period:newPrize.limitPeriod||null}).throwOnError(); }catch(err){ handleSyncError(err); }
+    try{ await sb.from('prizes').insert({id:newPrize.id, child_id:child.id, label:newPrize.label, emoji:newPrize.emoji, cost:newPrize.cost, grants_minutes:newPrize.grantsMinutes||null, limit_max:newPrize.limitMax||null, limit_period:newPrize.limitPeriod||null, sort_order:newPrize.sortOrder}).throwOnError(); }catch(err){ handleSyncError(err); }
   };
 
   document.querySelectorAll('[data-edit-challenge]').forEach(b=>{
