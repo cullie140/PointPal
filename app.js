@@ -751,18 +751,18 @@ function parentChoresHTML(){
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Editing <b>${child.name}</b>'s chores. Names, amounts, icons, and schedules all update live. Removing a chore doesn't erase past history.</div>
+    <div class="sheet-sub">Editing <b>${child.name}</b>'s activities. Names, amounts, icons, and schedules all update live. Removing an activity doesn't erase past history.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
       <button class="icon-swatch" id="newChoreIconBtn" style="margin-top:10px;">${pendingChoreIcon}</button>
-      <input id="newChoreLabel" class="child-name-input" placeholder="New chore name" style="flex:1; margin-top:10px;">
+      <input id="newChoreLabel" class="child-name-input" placeholder="New activity name" style="flex:1; margin-top:10px;">
       <button class="schedule-pill" id="newChoreScheduleBtn" style="margin-top:10px;">📅 ${scheduleSummaryText(pendingChoreSchedule)}</button>
       <input id="newChoreAmount" class="settings-input" type="number" placeholder="amt" style="margin-top:8px;">
       <button class="icon-btn-sm currency-toggle" id="newChoreCurrencyBtn" style="margin-top:8px;">${pendingChoreCurrency==='points'?'Pts':'Min'}</button>
       <label style="display:flex; align-items:center; gap:6px; font-weight:700; font-size:13px; margin-top:8px;">
         <input type="checkbox" id="newChoreRepeat"> Repeatable
       </label>
-      <button class="btn btn-primary" id="addChoreBtn" style="margin-top:8px;">Add Chore</button>
+      <button class="btn btn-primary" id="addChoreBtn" style="margin-top:8px;">Add Activity</button>
     </div>
   `;
 }
@@ -778,7 +778,7 @@ function parentChallengesHTML(){
         <div style="font-size:24px;">${chore ? chore.emoji : '🏆'}</div>
         <div style="flex:1; min-width:0;">
           <div style="font-weight:800; font-size:14px;">${ch.label}</div>
-          <div style="font-size:12px; color:var(--ink-soft); font-weight:700;">${chore ? chore.label : 'Unknown chore'} · ${ch.target}x · +${ch.bonus} ${cur} · ${window}</div>
+          <div style="font-size:12px; color:var(--ink-soft); font-weight:700;">${chore ? chore.label : 'Unknown activity'} · ${ch.target}x · +${ch.bonus} ${cur} · ${window}</div>
         </div>
         <button class="icon-btn-sm" data-edit-challenge="${ch.id}">Edit</button>
         <button class="icon-btn-sm" data-challenge-del="${ch.id}">Remove</button>
@@ -786,7 +786,7 @@ function parentChallengesHTML(){
     </div>`;
   }).join('');
   return `
-    <div class="sheet-sub">Challenges watch a chore's approvals and pay a bonus once the target is hit — recurring ones reset every week, one-time ones only run between the dates you set.</div>
+    <div class="sheet-sub">Challenges watch an activity's approvals and pay a bonus once the target is hit — recurring ones reset every week, one-time ones only run between the dates you set.</div>
     ${rows || `<div class="empty-state"><div class="e">🏆</div>No challenges set up yet.</div>`}
     <div class="add-row" style="margin-top:16px;">
       <button class="btn btn-primary" id="addChallengeBtn" style="width:100%;">+ Add Challenge</button>
@@ -992,7 +992,7 @@ function challengeEditorHTML(){
   ` : `<div class="sheet-sub" style="margin-top:8px;">Resets every week, indefinitely — same as School's streak.</div>`;
 
   return `
-    <div class="sched-sub-label">Which chore?</div>
+    <div class="sched-sub-label">Which activity?</div>
     <select id="chalChoreSelect" class="child-name-input">${choreOptions}</select>
     <div class="sched-sub-label">Challenge name</div>
     <input id="chalLabel" class="child-name-input" placeholder="e.g. Dishes Streak" value="${challengeDraft.label}">
@@ -1130,7 +1130,7 @@ function settingsManualMenuHTML(){
       <button class="manual-tile mt-chore" data-manual-open="chore">
         <div class="manual-tile-ic">✅</div>
         <div class="manual-tile-text">
-          <div class="manual-tile-lbl">Chore</div>
+          <div class="manual-tile-lbl">Activity</div>
           <div class="manual-tile-sub">Credit a past completion</div>
         </div>
         <div class="manual-tile-chev">›</div>
@@ -1155,13 +1155,13 @@ function manualChoreFormHTML(){
   const choreOptions = child.chores.map(c=>`<option value="${c.id}">${c.emoji} ${c.label} (+${c.amount} ${c.currency==='points'?'pts':'min'})</option>`).join('');
   return `
     ${manualBackHTML()}
-    <div class="settings-label" style="margin-bottom:4px;">Add a chore completion</div>
+    <div class="settings-label" style="margin-bottom:4px;">Add an activity completion</div>
     <div class="sheet-sub" style="margin-bottom:8px;">For <b>${child.name}</b>. Credits points or minutes immediately, and checks any matching challenge — no approval needed.</div>
-    ${child.chores.length===0 ? `<div class="sheet-sub">No chores set up yet.</div>` : `
+    ${child.chores.length===0 ? `<div class="sheet-sub">No activities set up yet.</div>` : `
     <div class="add-row" style="flex-wrap:wrap;">
       <select id="manualChoreSelect" class="child-name-input" style="flex:1 1 100%;">${choreOptions}</select>
       <input type="date" id="manualChoreDate" class="child-name-input" style="flex:1 1 100%; margin-top:8px;" max="${todayKey()}">
-      <button class="btn btn-primary" id="addManualChoreBtn" style="margin-top:8px;">Add Chore Entry</button>
+      <button class="btn btn-primary" id="addManualChoreBtn" style="margin-top:8px;">Add Activity Entry</button>
     </div>`}
   `;
 }
@@ -1344,7 +1344,7 @@ function wireParentBody(){
   });
   const addChallengeBtn = document.getElementById('addChallengeBtn');
   if(addChallengeBtn) addChallengeBtn.onclick=()=>{
-    if(child.chores.length===0){ toast('Add a chore first'); return; }
+    if(child.chores.length===0){ toast('Add an activity first'); return; }
     openChallengePicker({type:'new'});
   };
 
@@ -1549,7 +1549,7 @@ function homeHTML(){
 
   return `
     ${activeChallengesHTML()}
-    <div class="section-title">Today's Chores</div>
+    <div class="section-title">Today's Activities</div>
     <div class="grid">${choreCards}</div>
   `;
 }
