@@ -580,24 +580,34 @@ function minutesGrantTotal(e){
   return e.currency==='minutes' ? e.amount : 0;
 }
 
-async function logMinutesUsed(id, amount){
+async function logMinutesUsed(amount){
   if(!requireOnline()) return;
-  const owner = findEntryOwner(id);
-  if(!owner) return;
-  const c = owner.child, e = owner.entry;
-  if(e.status!=='approved') return;
-  const total = minutesGrantTotal(e);
-  if(total<=0) return;
-  const remaining = total - (e.minutesUsed||0);
-  const amt = Math.min(remaining, Math.max(0, Math.floor(amount) || 0));
-  if(amt<=0){ toast('Enter a valid number of minutes'); return; }
-  e.minutesUsed = (e.minutesUsed||0) + amt;
-  c.minutes = Math.max(0, c.minutes - amt);
-  const left = total - e.minutesUsed;
-  toast(`Logged ${amt} min used from "${e.label}" — ${left} min left`);
+  const c = child;
+  const requested = Math.max(0, Math.floor(amount) || 0);
+  if(requested<=0){ toast('Enter a valid number of minutes'); return; }
+  const openEntries = c.entries
+    .filter(e=>e.status==='approved' && minutesGrantTotal(e)-(e.minutesUsed||0)>0)
+    .sort((a,b)=>a.ts-b.ts);
+  let remaining = requested;
+  const touched = [];
+  for(const e of openEntries){
+    if(remaining<=0) break;
+    const avail = minutesGrantTotal(e) - (e.minutesUsed||0);
+    const take = Math.min(avail, remaining);
+    if(take<=0) continue;
+    e.minutesUsed = (e.minutesUsed||0) + take;
+    remaining -= take;
+    touched.push(e);
+  }
+  const applied = requested - remaining;
+  if(applied<=0){ toast('No earned minutes left to log against'); return; }
+  c.minutes = Math.max(0, c.minutes - applied);
+  toast(applied<requested
+    ? `Logged ${applied} min used — that's all that was tracked as earned (${c.minutes} min left)`
+    : `Logged ${applied} min used — ${c.minutes} min left`);
   renderParentBody(); render();
   try{
-    await sb.from('entries').update({minutes_used:e.minutesUsed}).eq('id', id).throwOnError();
+    for(const e of touched) await sb.from('entries').update({minutes_used:e.minutesUsed}).eq('id', e.id).throwOnError();
     await sb.from('children').update({minutes:c.minutes}).eq('id', c.id).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
@@ -1484,15 +1494,11 @@ function settingsProfileHTML(){
 
 function settingsPointsHTML(){
   const openMinuteEntries = child.entries
-    .filter(e=>e.status==='approved' && minutesGrantTotal(e)-(e.minutesUsed||0)>0)
-    .sort((a,b)=>b.ts-a.ts);
+    .filter(e=>e.status==='approved' && minutesGrantTotal(e)-(e.minutesUsed||0)>0);
   const logSection = openMinuteEntries.length ? `
     <div class="settings-row" style="margin-top:22px; flex-direction:column; align-items:stretch; gap:8px;">
       <div class="settings-label">Log screen time used</div>
-      <div class="sheet-sub" style="margin:0 0 4px;">Pick which earned minutes were spent and how many, so ${child.name} can see what's left.</div>
-      <select id="minutesLogSelect" class="child-name-input">
-        ${openMinuteEntries.map(e=>{ const total = minutesGrantTotal(e); return `<option value="${e.id}">${e.emoji} ${e.label} — ${total-(e.minutesUsed||0)} of ${total} min left</option>`; }).join('')}
-      </select>
+      <div class="sheet-sub" style="margin:0 0 4px;">Deducts from the oldest earned minutes first, so ${child.name} can see what's left.</div>
       <div style="display:flex; gap:8px;">
         <input id="minutesLogAmount" class="settings-input" type="number" min="1" placeholder="min used" style="flex:1;">
         <button class="btn btn-primary" id="logMinutesBtn">Log Used</button>
@@ -1784,11 +1790,10 @@ function wireParentBody(){
   });
   const logMinutesBtn = document.getElementById('logMinutesBtn');
   if(logMinutesBtn) logMinutesBtn.onclick=()=>{
-    const select = document.getElementById('minutesLogSelect');
     const amountInput = document.getElementById('minutesLogAmount');
     const amt = parseInt(amountInput.value);
-    if(!select.value || !amt){ toast('Enter a valid number of minutes'); return; }
-    logMinutesUsed(select.value, amt);
+    if(!amt){ toast('Enter a valid number of minutes'); return; }
+    logMinutesUsed(amt);
   };
 
   document.querySelectorAll('[data-stab]').forEach(b=>{
