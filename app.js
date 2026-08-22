@@ -1892,24 +1892,17 @@ function wireParentBody(){
   if(resetBtn) resetBtn.onclick=async ()=>{
     if(!requireOnline()) return;
     if(confirm(`This will erase all of ${child.name}'s points, minutes, and history. Are you sure?`)){
-      const idx = state.children.findIndex(c=>c.id===child.id);
-      const fresh = makeChild(child.id, child.name);
-      fresh.avatar = child.avatar;
-      fresh.pin = child.pin;
-      state.children[idx] = fresh;
-      child = fresh;
+      child.entries = [];
+      child.punishments = [];
+      child.points = 0;
+      child.minutes = 0;
+      child.goalPrizeId = null;
       ensureWeek(child);
       closeParent(); render();
       try{
-        await sb.from('entries').delete().eq('child_id', fresh.id).throwOnError();
-        await sb.from('chores').delete().eq('child_id', fresh.id).throwOnError();
-        await sb.from('prizes').delete().eq('child_id', fresh.id).throwOnError();
-        await sb.from('challenges').delete().eq('child_id', fresh.id).throwOnError();
-        await sb.from('punishments').delete().eq('child_id', fresh.id).throwOnError();
-        await sb.from('children').update({points:0, minutes:0, week_start: fresh.weekStart, goal_prize_id: null}).eq('id', fresh.id).throwOnError();
-        await sb.from('chores').insert(fresh.chores.map(c=>({id:c.id, child_id:fresh.id, label:c.label, emoji:c.emoji, amount:c.amount, currency:c.currency, repeatable:c.repeatable, schedule:c.schedule||null}))).throwOnError();
-        await sb.from('prizes').insert(fresh.prizes.map(p=>({id:p.id, child_id:fresh.id, label:p.label, emoji:p.emoji, cost:p.cost, limit_max:p.limitMax||null, limit_period:p.limitPeriod||null}))).throwOnError();
-        await sb.from('challenges').insert(fresh.challenges.map(ch=>({id:ch.id, child_id:fresh.id, chore_id:ch.choreId, label:ch.label, target:ch.target, bonus:ch.bonus, currency:ch.currency, type:ch.type, start_date:ch.startDate||null, end_date:ch.endDate||null}))).throwOnError();
+        await sb.from('entries').delete().eq('child_id', child.id).throwOnError();
+        await sb.from('punishments').delete().eq('child_id', child.id).throwOnError();
+        await sb.from('children').update({points:0, minutes:0, goal_prize_id: null}).eq('id', child.id).throwOnError();
       }catch(err){ handleSyncError(err); }
     }
   };
