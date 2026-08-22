@@ -545,8 +545,7 @@
     color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center;
     padding:24px; text-align:center;
   }
-  .boot-logo{font-size:52px; margin-bottom:6px;}
-  .boot-title{font-family:'Baloo 2', sans-serif; font-weight:800; font-size:28px;}
+  .boot-logo{width:min(300px, 78vw); height:auto; margin-bottom:16px;}
   .boot-sub{font-size:14px; font-weight:700; opacity:.75; margin-top:6px; margin-bottom:22px;}
   .login-form{width:100%; max-width:320px;}
   .login-form input{background:rgba(255,255,255,.95);}
@@ -730,15 +729,13 @@
 
 <!-- BOOT LOADING SCREEN -->
 <div class="boot-screen" id="loadingScreen">
-  <div class="boot-logo">🏆</div>
-  <div class="boot-title">PointPal</div>
+  <img class="boot-logo" src="logo-horizontal.png" alt="PointPal">
   <div class="boot-sub" id="loadingSub">Loading…</div>
 </div>
 
 <!-- LOGIN SCREEN -->
 <div class="boot-screen" id="loginScreen" style="display:none;">
-  <div class="boot-logo">🏆</div>
-  <div class="boot-title">PointPal</div>
+  <img class="boot-logo" src="logo-horizontal.png" alt="PointPal">
   <div class="boot-sub">Sign in to sync this device</div>
   <div class="login-form">
     <input type="email" id="loginEmail" class="child-name-input" placeholder="Family email" autocomplete="username">
@@ -750,8 +747,7 @@
 
 <!-- KIOSK IDLE LOCK SCREEN -->
 <div class="boot-screen lock-screen" id="kioskLockScreen">
-  <div class="boot-logo">🏆</div>
-  <div class="boot-title">PointPal</div>
+  <img class="boot-logo" src="logo-horizontal.png" alt="PointPal">
   <div class="boot-sub">Tap your avatar to continue</div>
   <div class="lock-grid" id="lockGrid"></div>
 </div>

@@ -1,11 +1,12 @@
-const CACHE_NAME = 'pointpal-cache-v27';
+const CACHE_NAME = 'pointpal-cache-v28';
 const ASSETS = [
   './',
   './index.html',
   './app.js',
   './manifest.json',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './logo-horizontal.png'
 ];
 
 self.addEventListener('install', (event) => {
