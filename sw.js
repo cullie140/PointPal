@@ -1,11 +1,11 @@
-const CACHE_NAME = 'pointpal-cache-v35';
+const CACHE_NAME = 'pointpal-cache-v36';
 const ASSETS = [
   './',
   './index.html',
   './app.js',
   './manifest.json',
-  './icon-192.png',
-  './icon-512.png',
+  './icon-192-v2.png',
+  './icon-512-v2.png',
   './logo-horizontal.png'
 ];
 
