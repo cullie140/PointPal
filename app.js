@@ -14,32 +14,88 @@ const ICON_SET = [
   '⚽','🚲','🏊','🎢','🛍️','💰','🌟','🐠'
 ];
 
+const DEFAULT_CHORES = [
+  { id:'dishes',   label:'Dishes',             emoji:'🍽️', points:5,  repeatable:false },
+  { id:'brush',    label:'Brush Teeth',        emoji:'🪥', points:5,  repeatable:false },
+  { id:'wipe',     label:'Wipe Butt',          emoji:'🧻', points:5,  repeatable:true  },
+  { id:'shower',   label:'Shower',             emoji:'🚿', points:10, repeatable:false },
+  { id:'dressed',  label:'Get Up & Dressed',   emoji:'👕', points:10, repeatable:false },
+  { id:'worksheet',label:'Worksheet',          emoji:'📝', points:1,  repeatable:true  },
+];
+const DEFAULT_PRIZES = [
+  { id:'p5min',    label:'5 Minutes Electronics',   emoji:'⏱️', cost:20,   grantsMinutes:5 },
+  { id:'treat',    label:'Extra Treat or Dessert',  emoji:'🍪', cost:100 },
+  { id:'icecream', label:'Go Out for Ice Cream',    emoji:'🍦', cost:250 },
+  { id:'toy',      label:'$5–$10 Toy',              emoji:'🧸', cost:250 },
+  { id:'outing',   label:'Fun Outing',              emoji:'🎡', cost:500 },
+  { id:'fish',     label:'Fish',                    emoji:'🐠', cost:1000 },
+];
+
+function makeChild(id, name){
+  return {
+    id, name,
+    points: 0,
+    minutes: 0,
+    weekStart: null,          // ISO date (Monday) this week's streak is counted against
+    chores: structuredClone(DEFAULT_CHORES),
+    prizes: structuredClone(DEFAULT_PRIZES),
+    entries: []                // {id, ts, kind:'chore'|'school'|'bonus'|'redeem', refId, label, emoji, currency:'points'|'minutes', amount, status:'pending'|'approved'|'denied', grantsMinutes?}
+  };
+}
+
 const DEFAULT_STATE = {
-  childName: 'Champ',
-  points: 0,
-  minutes: 0,
-  weekStart: null,          // ISO date (Monday) this week's streak is counted against
   pin: '1234',
-  chores: [
-    { id:'dishes',   label:'Dishes',             emoji:'🍽️', points:5,  repeatable:false },
-    { id:'brush',    label:'Brush Teeth',        emoji:'🪥', points:5,  repeatable:false },
-    { id:'wipe',     label:'Wipe Butt',          emoji:'🧻', points:5,  repeatable:true  },
-    { id:'shower',   label:'Shower',             emoji:'🚿', points:10, repeatable:false },
-    { id:'dressed',  label:'Get Up & Dressed',   emoji:'👕', points:10, repeatable:false },
-    { id:'worksheet',label:'Worksheet',          emoji:'📝', points:1,  repeatable:true  },
-  ],
-  prizes: [
-    { id:'p5min',    label:'5 Minutes Electronics',   emoji:'⏱️', cost:20,   grantsMinutes:5 },
-    { id:'treat',    label:'Extra Treat or Dessert',  emoji:'🍪', cost:100 },
-    { id:'icecream', label:'Go Out for Ice Cream',    emoji:'🍦', cost:250 },
-    { id:'toy',      label:'$5–$10 Toy',              emoji:'🧸', cost:250 },
-    { id:'outing',   label:'Fun Outing',              emoji:'🎡', cost:500 },
-    { id:'fish',     label:'Fish',                    emoji:'🐠', cost:1000 },
-  ],
-  entries: []   // {id, ts, kind:'chore'|'school'|'bonus'|'redeem', refId, label, emoji, currency:'points'|'minutes', amount, status:'pending'|'approved'|'denied', grantsMinutes?}
+  activeChildId: 'child-1',
+  children: [ makeChild('child-1', 'Champ') ]
 };
 
+/* ---------- persistence ---------- */
+function migrateToMultiChild(parsed){
+  if(parsed.children) return parsed;
+  const legacyChild = {
+    id: 'child-1',
+    name: parsed.childName || 'Champ',
+    points: parsed.points || 0,
+    minutes: parsed.minutes || 0,
+    weekStart: parsed.weekStart || null,
+    chores: parsed.chores || structuredClone(DEFAULT_CHORES),
+    prizes: parsed.prizes || structuredClone(DEFAULT_PRIZES),
+    entries: parsed.entries || []
+  };
+  return {
+    pin: parsed.pin || '1234',
+    activeChildId: 'child-1',
+    children: [legacyChild]
+  };
+}
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return structuredClone(DEFAULT_STATE);
+    const parsed = migrateToMultiChild(JSON.parse(raw));
+    return Object.assign(structuredClone(DEFAULT_STATE), parsed);
+  }catch(e){
+    return structuredClone(DEFAULT_STATE);
+  }
+}
+function saveState(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
 let state = loadState();
+function getActiveChild(){
+  return state.children.find(c=>c.id===state.activeChildId) || state.children[0];
+}
+function switchChild(id){
+  const c = state.children.find(x=>x.id===id);
+  if(!c) return;
+  state.activeChildId = id;
+  child = c;
+  saveState();
+  render();
+}
+
+let child = getActiveChild();
 let view = 'home';
 let pinContext = null;   // 'unlock' -> opens parent overlay
 let pinBuffer = '';
@@ -52,21 +108,6 @@ let pendingPrizeIcon = '🎁';
 let iconPickerContext = null; // {type:'newChore'|'newPrize'|'editChore'|'editPrize', id?}
 let settingsTab = 'profile'; // 'profile' | 'points' | 'manual' | 'data'
 let manualEntryType = null; // null | 'school' | 'chore' | 'prize'
-
-/* ---------- persistence ---------- */
-function loadState(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return structuredClone(DEFAULT_STATE);
-    const parsed = JSON.parse(raw);
-    return Object.assign(structuredClone(DEFAULT_STATE), parsed);
-  }catch(e){
-    return structuredClone(DEFAULT_STATE);
-  }
-}
-function saveState(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
 
 /* ---------- date helpers ---------- */
 function dateKey(d){
@@ -94,32 +135,45 @@ function scheduleMidnightRefresh(){
     scheduleMidnightRefresh();
   }, next.getTime()-now.getTime());
 }
-function ensureWeek(){
+function ensureWeek(c){
   const wk = weekKeyFor(new Date());
-  if(state.weekStart !== wk){
-    state.weekStart = wk;
+  if(c.weekStart !== wk){
+    c.weekStart = wk;
     saveState();
   }
 }
 
-/* ---------- derived helpers ---------- */
-function entriesToday(kind, refId){
+/* ---------- derived helpers (all take an explicit child) ---------- */
+function entriesToday(c, kind, refId){
   const tk = todayKey();
-  return state.entries.filter(e => e.kind===kind && (refId===undefined || e.refId===refId) && dateKey(new Date(e.ts))===tk);
+  return c.entries.filter(e => e.kind===kind && (refId===undefined || e.refId===refId) && dateKey(new Date(e.ts))===tk);
 }
-function entriesForDay(dk){
-  return state.entries.filter(e => dateKey(new Date(e.ts))===dk).sort((a,b)=>a.ts-b.ts);
+function entriesForDay(c, dk){
+  return c.entries.filter(e => dateKey(new Date(e.ts))===dk).sort((a,b)=>a.ts-b.ts);
 }
-function goodDaysThisWeekApproved(){
-  const wk = state.weekStart;
-  return state.entries.filter(e => e.kind==='school' && e.status==='approved' && weekKeyFor(new Date(e.ts))===wk).length;
+function goodDaysThisWeekApproved(c){
+  const wk = c.weekStart;
+  return c.entries.filter(e => e.kind==='school' && e.status==='approved' && weekKeyFor(new Date(e.ts))===wk).length;
 }
-function bonusAlreadyGrantedThisWeek(){
-  const wk = state.weekStart;
-  return state.entries.some(e => e.kind==='bonus' && weekKeyFor(new Date(e.ts))===wk);
+function bonusAlreadyGrantedThisWeek(c){
+  const wk = c.weekStart;
+  return c.entries.some(e => e.kind==='bonus' && weekKeyFor(new Date(e.ts))===wk);
 }
 function pendingEntries(){
-  return state.entries.filter(e=>e.status==='pending').sort((a,b)=>a.ts-b.ts);
+  const all = [];
+  state.children.forEach(c=>{
+    c.entries.forEach(e=>{
+      if(e.status==='pending') all.push(Object.assign({}, e, {_childId:c.id, _childName:c.name}));
+    });
+  });
+  return all.sort((a,b)=>a.ts-b.ts);
+}
+function findEntryOwner(id){
+  for(const c of state.children){
+    const e = c.entries.find(x=>x.id===id);
+    if(e) return {child:c, entry:e};
+  }
+  return null;
 }
 
 /* ---------- id gen ---------- */
@@ -127,13 +181,13 @@ function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(
 
 /* ============ ACTIONS ============ */
 function requestChore(choreId, evt){
-  const chore = state.chores.find(c=>c.id===choreId);
+  const chore = child.chores.find(c=>c.id===choreId);
   if(!chore) return;
   if(!chore.repeatable){
-    const already = entriesToday('chore', choreId).some(e=>e.status!=='denied');
+    const already = entriesToday(child, 'chore', choreId).some(e=>e.status!=='denied');
     if(already){ toast(`${chore.label} is already done for today! 🎉`); return; }
   }
-  state.entries.push({
+  child.entries.push({
     id:uid(), ts:Date.now(), kind:'chore', refId:choreId,
     label:chore.label, emoji:chore.emoji, currency:'points', amount:chore.points, status:'pending'
   });
@@ -144,10 +198,10 @@ function requestChore(choreId, evt){
 }
 
 function requestSchoolDay(evt){
-  ensureWeek();
-  const already = entriesToday('school').some(e=>e.status!=='denied');
+  ensureWeek(child);
+  const already = entriesToday(child, 'school').some(e=>e.status!=='denied');
   if(already){ toast('Already marked for today! 🌟'); return; }
-  state.entries.push({
+  child.entries.push({
     id:uid(), ts:Date.now(), kind:'school', refId:'school',
     label:'Good Day at School', emoji:'🎒', currency:'minutes', amount:15, status:'pending'
   });
@@ -168,24 +222,24 @@ function addPastSchoolDay(dateStr){
   const d = pastDateOrToast(dateStr);
   if(!d) return;
   const dk = dateKey(d);
-  const already = entriesForDay(dk).some(e=>e.kind==='school' && e.status!=='denied');
+  const already = entriesForDay(child, dk).some(e=>e.kind==='school' && e.status!=='denied');
   if(already){ toast('That day already has a school entry'); return; }
 
-  state.entries.push({
+  child.entries.push({
     id:uid(), ts:d.getTime(), kind:'school', refId:'school',
     label:'Good Day at School', emoji:'🎒', currency:'minutes', amount:15, status:'approved'
   });
-  state.minutes += 15;
+  child.minutes += 15;
 
   const wk = weekKeyFor(d);
-  const goodDays = state.entries.filter(e=>e.kind==='school' && e.status==='approved' && weekKeyFor(new Date(e.ts))===wk).length;
-  const bonusAlready = state.entries.some(e=>e.kind==='bonus' && weekKeyFor(new Date(e.ts))===wk);
+  const goodDays = child.entries.filter(e=>e.kind==='school' && e.status==='approved' && weekKeyFor(new Date(e.ts))===wk).length;
+  const bonusAlready = child.entries.some(e=>e.kind==='bonus' && weekKeyFor(new Date(e.ts))===wk);
   if(goodDays>=5 && !bonusAlready){
-    state.entries.push({
+    child.entries.push({
       id:uid(), ts:d.getTime(), kind:'bonus', refId:'bonus',
       label:'5-Day Streak Bonus!', emoji:'🏆', currency:'minutes', amount:120, status:'approved'
     });
-    state.minutes += 120;
+    child.minutes += 120;
     toast('5 good days that week — bonus added! 🏆');
   } else {
     toast('Added a Good Day at School ✅');
@@ -194,46 +248,46 @@ function addPastSchoolDay(dateStr){
 }
 
 function addPastChore(choreId, dateStr){
-  const chore = state.chores.find(c=>c.id===choreId);
+  const chore = child.chores.find(c=>c.id===choreId);
   if(!chore) return;
   const d = pastDateOrToast(dateStr);
   if(!d) return;
   const dk = dateKey(d);
   if(!chore.repeatable){
-    const already = entriesForDay(dk).some(e=>e.kind==='chore' && e.refId===choreId && e.status!=='denied');
+    const already = entriesForDay(child, dk).some(e=>e.kind==='chore' && e.refId===choreId && e.status!=='denied');
     if(already){ toast(`${chore.label} already has an entry that day`); return; }
   }
-  state.entries.push({
+  child.entries.push({
     id:uid(), ts:d.getTime(), kind:'chore', refId:choreId,
     label:chore.label, emoji:chore.emoji, currency:'points', amount:chore.points, status:'approved'
   });
-  state.points += chore.points;
+  child.points += chore.points;
   toast(`Added "${chore.label}" ✅`);
   saveState(); renderParentBody(); render();
 }
 
 function addPastPrizeRedemption(prizeId, dateStr){
-  const prize = state.prizes.find(p=>p.id===prizeId);
+  const prize = child.prizes.find(p=>p.id===prizeId);
   if(!prize) return;
   const d = pastDateOrToast(dateStr);
   if(!d) return;
-  state.entries.push({
+  child.entries.push({
     id:uid(), ts:d.getTime(), kind:'redeem', refId:prizeId,
     label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'approved',
     grantsMinutes: prize.grantsMinutes || 0
   });
-  state.points = Math.max(0, state.points - prize.cost);
-  if(prize.grantsMinutes) state.minutes += prize.grantsMinutes;
+  child.points = Math.max(0, child.points - prize.cost);
+  if(prize.grantsMinutes) child.minutes += prize.grantsMinutes;
   toast(`Added "${prize.label}" redemption`);
   saveState(); renderParentBody(); render();
 }
 
 function requestPrize(prizeId, evt){
-  const prize = state.prizes.find(p=>p.id===prizeId);
+  const prize = child.prizes.find(p=>p.id===prizeId);
   if(!prize) return;
-  const already = state.entries.some(e=>e.kind==='redeem' && e.refId===prizeId && e.status==='pending');
+  const already = child.entries.some(e=>e.kind==='redeem' && e.refId===prizeId && e.status==='pending');
   if(already){ toast('Already waiting on approval for that one!'); return; }
-  state.entries.push({
+  child.entries.push({
     id:uid(), ts:Date.now(), kind:'redeem', refId:prizeId,
     label:prize.label, emoji:prize.emoji, currency:'points', amount:prize.cost, status:'pending',
     grantsMinutes: prize.grantsMinutes || 0
@@ -245,26 +299,28 @@ function requestPrize(prizeId, evt){
 }
 
 function approveEntry(id, opts){
-  const e = state.entries.find(x=>x.id===id);
-  if(!e || e.status!=='pending') return;
-  if(!(opts && opts.silent)) snapshotForUndo(`Approved "${e.label}"`);
+  const owner = findEntryOwner(id);
+  if(!owner) return;
+  const c = owner.child, e = owner.entry;
+  if(e.status!=='pending') return;
+  if(!(opts && opts.silent)) snapshotForUndo(`Approved "${e.label}"`, c);
   e.status='approved';
 
   if(e.kind==='chore' || e.kind==='school' || e.kind==='bonus'){
-    if(e.currency==='points') state.points += e.amount;
-    else state.minutes += e.amount;
+    if(e.currency==='points') c.points += e.amount;
+    else c.minutes += e.amount;
     burstConfetti();
   } else if(e.kind==='redeem'){
-    state.points -= e.amount;
-    if(e.grantsMinutes) state.minutes += e.grantsMinutes;
+    c.points -= e.amount;
+    if(e.grantsMinutes) c.minutes += e.grantsMinutes;
     burstConfetti();
   }
 
   if(e.kind==='school'){
-    ensureWeek();
-    const goodDays = goodDaysThisWeekApproved();
-    if(goodDays>=5 && !bonusAlreadyGrantedThisWeek()){
-      state.entries.push({
+    ensureWeek(c);
+    const goodDays = goodDaysThisWeekApproved(c);
+    if(goodDays>=5 && !bonusAlreadyGrantedThisWeek(c)){
+      c.entries.push({
         id:uid(), ts:Date.now(), kind:'bonus', refId:'bonus',
         label:'5-Day Streak Bonus!', emoji:'🏆', currency:'minutes', amount:120, status:'pending'
       });
@@ -278,18 +334,21 @@ function approveEntry(id, opts){
 function bulkApproveAll(){
   const ids = pendingEntries().map(e=>e.id);
   if(ids.length===0) return;
-  const beforeLen = state.entries.length;
+  const beforeLen = state.children.reduce((sum,c)=>sum+c.entries.length, 0);
   ids.forEach(id=>approveEntry(id, {silent:true}));
-  const bonusAdded = state.entries.length > beforeLen;
+  const afterLen = state.children.reduce((sum,c)=>sum+c.entries.length, 0);
+  const bonusAdded = afterLen > beforeLen;
   toast(bonusAdded
     ? `Approved ${ids.length} item${ids.length>1?'s':''} — plus a new streak bonus to approve! 🏆`
     : `Approved ${ids.length} item${ids.length>1?'s':''} ✅`);
 }
 
 function denyEntry(id, opts){
-  const e = state.entries.find(x=>x.id===id);
-  if(!e || e.status!=='pending') return;
-  if(!(opts && opts.silent)) snapshotForUndo(`Denied "${e.label}"`);
+  const owner = findEntryOwner(id);
+  if(!owner) return;
+  const c = owner.child, e = owner.entry;
+  if(e.status!=='pending') return;
+  if(!(opts && opts.silent)) snapshotForUndo(`Denied "${e.label}"`, c);
   e.status='denied';
   saveState();
   render();
@@ -299,11 +358,12 @@ function denyEntry(id, opts){
 let lastActionSnapshot = null;
 let undoTimer = null;
 
-function snapshotForUndo(message){
+function snapshotForUndo(message, c){
   lastActionSnapshot = {
-    points: state.points,
-    minutes: state.minutes,
-    entries: structuredClone(state.entries)
+    childId: c.id,
+    points: c.points,
+    minutes: c.minutes,
+    entries: structuredClone(c.entries)
   };
   showUndoToast(message);
 }
@@ -330,9 +390,12 @@ function hideUndoToast(){
 
 function performUndo(){
   if(!lastActionSnapshot) return;
-  state.points = lastActionSnapshot.points;
-  state.minutes = lastActionSnapshot.minutes;
-  state.entries = lastActionSnapshot.entries;
+  const c = state.children.find(x=>x.id===lastActionSnapshot.childId);
+  if(c){
+    c.points = lastActionSnapshot.points;
+    c.minutes = lastActionSnapshot.minutes;
+    c.entries = lastActionSnapshot.entries;
+  }
   hideUndoToast();
   saveState();
   render();
@@ -425,18 +488,20 @@ function parentApproveHTML(){
       <div class="approve-all-count">${pend.length} waiting</div>
       <button class="btn-bulk-approve" id="bulkApproveBtn">Approve All</button>
     </div>`;
+  const multiChild = state.children.length > 1;
   return header + pend.map(e=>{
     const sign = e.kind==='redeem' ? '−' : '+';
     const cur = e.currency==='points' ? 'pts' : 'min';
     let extra = '';
     if(e.kind==='redeem'){
-      const after = state.points - e.amount;
+      const owner = state.children.find(c=>c.id===e._childId);
+      const after = (owner ? owner.points : 0) - e.amount;
       extra = `<div class="approval-meta">Balance after approving: <b style="color:${after<0?'var(--danger)':'var(--ink)'}">${after} pts</b></div>`;
     }
     return `
     <div class="approval-item">
       <div class="approval-top">
-        <div class="approval-label">${e.emoji} ${e.label}</div>
+        <div class="approval-label">${e.emoji} ${e.label}${multiChild?` <span class="child-tag">${e._childName}</span>`:''}</div>
         <div class="approval-amount">${sign}${e.amount} ${cur}</div>
       </div>
       <div class="approval-meta">${timeAgo(e.ts)}${e.grantsMinutes?` · also grants ${e.grantsMinutes} min`:''}</div>
@@ -450,7 +515,7 @@ function parentApproveHTML(){
 }
 
 function parentChoresHTML(){
-  const rows = state.chores.map(c=>`
+  const rows = child.chores.map(c=>`
     <div class="list-edit-item">
       <button class="icon-swatch" data-edit-chore-icon="${c.id}">${c.emoji}</button>
       <input class="settings-input label-edit" data-chore-label="${c.id}" value="${c.label}">
@@ -462,7 +527,7 @@ function parentChoresHTML(){
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Names, points, and icons all update live. Removing a chore doesn't erase past history.</div>
+    <div class="sheet-sub">Editing <b>${child.name}</b>'s chores. Names, points, and icons all update live. Removing a chore doesn't erase past history.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
       <button class="icon-swatch" id="newChoreIconBtn" style="margin-top:10px;">${pendingChoreIcon}</button>
@@ -477,7 +542,7 @@ function parentChoresHTML(){
 }
 
 function parentPrizesHTML(){
-  const rows = state.prizes.map(p=>`
+  const rows = child.prizes.map(p=>`
     <div class="list-edit-item">
       <button class="icon-swatch" data-edit-prize-icon="${p.id}">${p.emoji}</button>
       <input class="settings-input label-edit" data-prize-label="${p.id}" value="${p.label}">
@@ -487,7 +552,7 @@ function parentPrizesHTML(){
     </div>
   `).join('');
   return `
-    <div class="sheet-sub">Names, costs, bonus minutes, and icons all update live.</div>
+    <div class="sheet-sub">Editing <b>${child.name}</b>'s prizes. Names, costs, bonus minutes, and icons all update live.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
       <button class="icon-swatch" id="newPrizeIconBtn" style="margin-top:10px;">${pendingPrizeIcon}</button>
@@ -527,10 +592,10 @@ function pickIcon(emoji){
     const btn = document.getElementById('newPrizeIconBtn');
     if(btn) btn.textContent = emoji;
   } else if(ctx.type==='editChore'){
-    const c = state.chores.find(x=>x.id===ctx.id);
+    const c = child.chores.find(x=>x.id===ctx.id);
     if(c){ c.emoji = emoji; saveState(); render(); }
   } else if(ctx.type==='editPrize'){
-    const p = state.prizes.find(x=>x.id===ctx.id);
+    const p = child.prizes.find(x=>x.id===ctx.id);
     if(p){ p.emoji = emoji; saveState(); render(); }
   }
 }
@@ -552,28 +617,38 @@ function parentSettingsHTML(){
 }
 
 function settingsProfileHTML(){
-  return `
-    <div class="settings-row">
-      <div class="settings-label">Child's name</div>
+  const rows = state.children.map(c=>`
+    <div class="list-edit-item">
+      <input class="settings-input label-edit" data-child-name="${c.id}" value="${c.name}">
+      <button class="icon-btn-sm" data-child-del="${c.id}" ${state.children.length<=1?'disabled':''}>Remove</button>
     </div>
-    <input class="child-name-input" id="childNameInput" value="${state.childName}">
+  `).join('');
+  return `
+    <div class="settings-label">Children</div>
+    <div class="sheet-sub" style="margin-bottom:8px;">Switch between kids using the tabs at the top of Home.</div>
+    ${rows}
+    <div class="add-row" style="flex-wrap:wrap;">
+      <input id="newChildName" class="child-name-input" placeholder="Add a child" style="flex:1; margin-top:10px;">
+      <button class="btn btn-primary" id="addChildBtn" style="margin-top:10px;">Add Child</button>
+    </div>
 
-    <div class="settings-row" style="margin-top:18px;">
+    <div class="settings-row" style="margin-top:22px;">
       <div class="settings-label">Change PIN</div>
     </div>
     <input class="child-name-input" id="newPinInput" placeholder="New 4-digit PIN" maxlength="4" inputmode="numeric">
 
-    <button class="btn btn-primary" id="saveSettingsBtn" style="margin-top:18px;">Save Settings</button>
+    <button class="btn btn-primary" id="saveSettingsBtn" style="margin-top:18px;">Save PIN</button>
   `;
 }
 
 function settingsPointsHTML(){
   return `
+    <div class="sheet-sub" style="margin-bottom:8px;">Adjusting <b>${child.name}</b>'s balance.</div>
     <div class="settings-row">
       <div class="settings-label">Points balance</div>
       <div style="display:flex; gap:8px; align-items:center;">
         <button class="icon-btn-sm" data-adjust="points:-10">−10</button>
-        <b>${state.points}</b>
+        <b>${child.points}</b>
         <button class="icon-btn-sm" data-adjust="points:10">+10</button>
       </div>
     </div>
@@ -581,7 +656,7 @@ function settingsPointsHTML(){
       <div class="settings-label">Screen time (min)</div>
       <div style="display:flex; gap:8px; align-items:center;">
         <button class="icon-btn-sm" data-adjust="minutes:-5">−5</button>
-        <b>${state.minutes}</b>
+        <b>${child.minutes}</b>
         <button class="icon-btn-sm" data-adjust="minutes:5">+5</button>
       </div>
     </div>
@@ -635,7 +710,7 @@ function manualSchoolFormHTML(){
   return `
     ${manualBackHTML()}
     <div class="settings-label" style="margin-bottom:4px;">Add a missed school day</div>
-    <div class="sheet-sub" style="margin-bottom:8px;">Counts toward that week's streak and can trigger the 5-day bonus.</div>
+    <div class="sheet-sub" style="margin-bottom:8px;">For <b>${child.name}</b>. Counts toward that week's streak and can trigger the 5-day bonus.</div>
     <div class="add-row" style="flex-wrap:wrap;">
       <input type="date" id="missedSchoolDate" class="child-name-input" style="flex:1 1 100%;" max="${todayKey()}">
       <button class="btn btn-primary" id="addMissedSchoolBtn" style="margin-top:8px;">Add Missed Day</button>
@@ -644,12 +719,12 @@ function manualSchoolFormHTML(){
 }
 
 function manualChoreFormHTML(){
-  const choreOptions = state.chores.map(c=>`<option value="${c.id}">${c.emoji} ${c.label} (+${c.points} pts)</option>`).join('');
+  const choreOptions = child.chores.map(c=>`<option value="${c.id}">${c.emoji} ${c.label} (+${c.points} pts)</option>`).join('');
   return `
     ${manualBackHTML()}
     <div class="settings-label" style="margin-bottom:4px;">Add a chore completion</div>
-    <div class="sheet-sub" style="margin-bottom:8px;">Credits points immediately — no approval needed.</div>
-    ${state.chores.length===0 ? `<div class="sheet-sub">No chores set up yet.</div>` : `
+    <div class="sheet-sub" style="margin-bottom:8px;">For <b>${child.name}</b>. Credits points immediately — no approval needed.</div>
+    ${child.chores.length===0 ? `<div class="sheet-sub">No chores set up yet.</div>` : `
     <div class="add-row" style="flex-wrap:wrap;">
       <select id="manualChoreSelect" class="child-name-input" style="flex:1 1 100%;">${choreOptions}</select>
       <input type="date" id="manualChoreDate" class="child-name-input" style="flex:1 1 100%; margin-top:8px;" max="${todayKey()}">
@@ -659,12 +734,12 @@ function manualChoreFormHTML(){
 }
 
 function manualPrizeFormHTML(){
-  const prizeOptions = state.prizes.map(p=>`<option value="${p.id}">${p.emoji} ${p.label} (−${p.cost} pts)</option>`).join('');
+  const prizeOptions = child.prizes.map(p=>`<option value="${p.id}">${p.emoji} ${p.label} (−${p.cost} pts)</option>`).join('');
   return `
     ${manualBackHTML()}
     <div class="settings-label" style="margin-bottom:4px;">Add a prize redemption</div>
-    <div class="sheet-sub" style="margin-bottom:8px;">Deducts points immediately (won't go below 0).</div>
-    ${state.prizes.length===0 ? `<div class="sheet-sub">No prizes set up yet.</div>` : `
+    <div class="sheet-sub" style="margin-bottom:8px;">For <b>${child.name}</b>. Deducts points immediately (won't go below 0).</div>
+    ${child.prizes.length===0 ? `<div class="sheet-sub">No prizes set up yet.</div>` : `
     <div class="add-row" style="flex-wrap:wrap;">
       <select id="manualPrizeSelect" class="child-name-input" style="flex:1 1 100%;">${prizeOptions}</select>
       <input type="date" id="manualPrizeDate" class="child-name-input" style="flex:1 1 100%; margin-top:8px;" max="${todayKey()}">
@@ -676,8 +751,8 @@ function manualPrizeFormHTML(){
 function settingsDataHTML(){
   return `
     <div class="settings-label" style="margin-bottom:8px;">Danger Zone</div>
-    <div class="sheet-sub" style="margin-bottom:12px;">This erases all points, minutes, and history. This can't be undone.</div>
-    <button class="btn btn-deny" id="resetAllBtn">Reset All Data</button>
+    <div class="sheet-sub" style="margin-bottom:12px;">This erases all of <b>${child.name}</b>'s points, minutes, and history. This can't be undone.</div>
+    <button class="btn btn-deny" id="resetAllBtn">Reset ${child.name}'s Data</button>
   `;
 }
 
@@ -689,7 +764,7 @@ function wireParentBody(){
 
   document.querySelectorAll('[data-chore-label]').forEach(inp=>{
     inp.onchange=()=>{
-      const c = state.chores.find(x=>x.id===inp.dataset.choreLabel);
+      const c = child.chores.find(x=>x.id===inp.dataset.choreLabel);
       if(!c) return;
       const val = inp.value.trim();
       if(val){ c.label = val; saveState(); render(); } else { inp.value = c.label; }
@@ -697,19 +772,19 @@ function wireParentBody(){
   });
   document.querySelectorAll('[data-chore-points]').forEach(inp=>{
     inp.onchange=()=>{
-      const c = state.chores.find(x=>x.id===inp.dataset.chorePoints);
+      const c = child.chores.find(x=>x.id===inp.dataset.chorePoints);
       if(c){ c.points = parseInt(inp.value)||0; saveState(); }
     };
   });
   document.querySelectorAll('[data-chore-repeat]').forEach(inp=>{
     inp.onchange=()=>{
-      const c = state.chores.find(x=>x.id===inp.dataset.choreRepeat);
+      const c = child.chores.find(x=>x.id===inp.dataset.choreRepeat);
       if(c){ c.repeatable = inp.checked; saveState(); render(); }
     };
   });
   document.querySelectorAll('[data-chore-del]').forEach(b=>{
     b.onclick=()=>{
-      state.chores = state.chores.filter(c=>c.id!==b.dataset.choreDel);
+      child.chores = child.chores.filter(c=>c.id!==b.dataset.choreDel);
       saveState(); renderParentBody(); render();
     };
   });
@@ -724,14 +799,14 @@ function wireParentBody(){
     const pts = parseInt(document.getElementById('newChorePoints').value)||0;
     const rep = document.getElementById('newChoreRepeat').checked;
     if(!label) return;
-    state.chores.push({id:uid(), label, emoji:pendingChoreIcon, points:pts, repeatable:rep});
+    child.chores.push({id:uid(), label, emoji:pendingChoreIcon, points:pts, repeatable:rep});
     pendingChoreIcon = '⭐';
     saveState(); renderParentBody(); render();
   };
 
   document.querySelectorAll('[data-prize-label]').forEach(inp=>{
     inp.onchange=()=>{
-      const p = state.prizes.find(x=>x.id===inp.dataset.prizeLabel);
+      const p = child.prizes.find(x=>x.id===inp.dataset.prizeLabel);
       if(!p) return;
       const val = inp.value.trim();
       if(val){ p.label = val; saveState(); render(); } else { inp.value = p.label; }
@@ -739,7 +814,7 @@ function wireParentBody(){
   });
   document.querySelectorAll('[data-prize-minutes]').forEach(inp=>{
     inp.onchange=()=>{
-      const p = state.prizes.find(x=>x.id===inp.dataset.prizeMinutes);
+      const p = child.prizes.find(x=>x.id===inp.dataset.prizeMinutes);
       if(!p) return;
       const mins = parseInt(inp.value);
       p.grantsMinutes = mins > 0 ? mins : undefined;
@@ -748,13 +823,13 @@ function wireParentBody(){
   });
   document.querySelectorAll('[data-prize-cost]').forEach(inp=>{
     inp.onchange=()=>{
-      const p = state.prizes.find(x=>x.id===inp.dataset.prizeCost);
+      const p = child.prizes.find(x=>x.id===inp.dataset.prizeCost);
       if(p){ p.cost = parseInt(inp.value)||0; saveState(); }
     };
   });
   document.querySelectorAll('[data-prize-del]').forEach(b=>{
     b.onclick=()=>{
-      state.prizes = state.prizes.filter(p=>p.id!==b.dataset.prizeDel);
+      child.prizes = child.prizes.filter(p=>p.id!==b.dataset.prizeDel);
       saveState(); renderParentBody(); render();
     };
   });
@@ -769,7 +844,7 @@ function wireParentBody(){
     const cost = parseInt(document.getElementById('newPrizeCost').value)||0;
     const mins = parseInt(document.getElementById('newPrizeMinutes').value)||0;
     if(!label) return;
-    state.prizes.push({id:uid(), label, emoji:pendingPrizeIcon, cost, grantsMinutes:mins||undefined});
+    child.prizes.push({id:uid(), label, emoji:pendingPrizeIcon, cost, grantsMinutes:mins||undefined});
     pendingPrizeIcon = '🎁';
     saveState(); renderParentBody(); render();
   };
@@ -777,7 +852,7 @@ function wireParentBody(){
   document.querySelectorAll('[data-adjust]').forEach(b=>{
     b.onclick=()=>{
       const [field, delta] = b.dataset.adjust.split(':');
-      state[field] = Math.max(0, state[field] + parseInt(delta));
+      child[field] = Math.max(0, child[field] + parseInt(delta));
       saveState(); renderParentBody(); render();
     };
   });
@@ -804,20 +879,59 @@ function wireParentBody(){
     addPastPrizeRedemption(document.getElementById('manualPrizeSelect').value, document.getElementById('manualPrizeDate').value);
   };
 
+  document.querySelectorAll('[data-child-name]').forEach(inp=>{
+    inp.onchange=()=>{
+      const c = state.children.find(x=>x.id===inp.dataset.childName);
+      if(!c) return;
+      const val = inp.value.trim();
+      if(val){ c.name = val; saveState(); render(); } else { inp.value = c.name; }
+    };
+  });
+  document.querySelectorAll('[data-child-del]').forEach(b=>{
+    b.onclick=()=>{
+      if(state.children.length<=1) return;
+      const c = state.children.find(x=>x.id===b.dataset.childDel);
+      if(!c) return;
+      if(confirm(`Remove ${c.name} and all of their history? This can't be undone.`)){
+        state.children = state.children.filter(x=>x.id!==c.id);
+        if(state.activeChildId===c.id){
+          state.activeChildId = state.children[0].id;
+          child = state.children[0];
+        }
+        saveState(); renderParentBody(); render();
+      }
+    };
+  });
+  const addChildBtn = document.getElementById('addChildBtn');
+  if(addChildBtn) addChildBtn.onclick=()=>{
+    const name = document.getElementById('newChildName').value.trim();
+    if(!name) return;
+    const newChild = makeChild(uid(), name);
+    state.children.push(newChild);
+    state.activeChildId = newChild.id;
+    child = newChild;
+    saveState(); renderParentBody(); render();
+  };
+
   const saveBtn = document.getElementById('saveSettingsBtn');
   if(saveBtn) saveBtn.onclick=()=>{
-    const name = document.getElementById('childNameInput').value.trim();
     const newPin = document.getElementById('newPinInput').value.trim();
-    if(name) state.childName = name;
-    if(newPin.length===4 && /^\d{4}$/.test(newPin)) state.pin = newPin;
-    saveState(); render();
-    toast('Settings saved ✅');
+    if(newPin.length===4 && /^\d{4}$/.test(newPin)){
+      state.pin = newPin;
+      saveState();
+      toast('PIN updated ✅');
+    } else {
+      toast('Enter a 4-digit PIN');
+    }
   };
   const resetBtn = document.getElementById('resetAllBtn');
   if(resetBtn) resetBtn.onclick=()=>{
-    if(confirm('This will erase all points, minutes, and history. Are you sure?')){
-      state = structuredClone(DEFAULT_STATE);
-      ensureWeek();
+    if(confirm(`This will erase all of ${child.name}'s points, minutes, and history. Are you sure?`)){
+      const idx = state.children.findIndex(c=>c.id===child.id);
+      const fresh = makeChild(child.id, child.name);
+      state.children[idx] = fresh;
+      child = fresh;
+      ensureWeek(child);
       saveState(); closeParent(); render();
     }
   };
@@ -825,19 +939,21 @@ function wireParentBody(){
 
 /* ============ RENDER: main views ============ */
 function render(){
-  ensureWeek();
-  document.getElementById('greetingName').textContent = `Hey, ${state.childName}! 👋`;
+  ensureWeek(child);
+  document.getElementById('greetingName').textContent = `Hey, ${child.name}! 👋`;
   document.getElementById('dateLine').textContent = new Date().toLocaleDateString(undefined,{weekday:'long', month:'short', day:'numeric'});
-  document.getElementById('pointsVal').textContent = state.points;
-  document.getElementById('minutesVal').textContent = state.minutes;
+  document.getElementById('pointsVal').textContent = child.points;
+  document.getElementById('minutesVal').textContent = child.minutes;
 
-  const pct = Math.max(6, (state.points % 1000)/1000*100);
+  const pct = Math.max(6, (child.points % 1000)/1000*100);
   document.getElementById('pointsWater').style.height = pct+'%';
   refreshFishTank();
 
   const pend = pendingEntries().length;
   const badge = document.getElementById('pendingBadge');
   if(pend>0){ badge.style.display='block'; badge.textContent=pend; } else { badge.style.display='none'; }
+
+  renderChildSwitcher();
 
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active', b.dataset.view===view));
 
@@ -852,14 +968,27 @@ function render(){
   }
 }
 
+function renderChildSwitcher(){
+  const row = document.getElementById('childSwitchRow');
+  if(!row) return;
+  if(state.children.length<=1){ row.style.display='none'; row.innerHTML=''; return; }
+  row.style.display='flex';
+  row.innerHTML = state.children.map(c=>
+    `<button class="child-pill ${c.id===child.id?'active':''}" data-switch-child="${c.id}">${c.name}</button>`
+  ).join('');
+  row.querySelectorAll('[data-switch-child]').forEach(b=>{
+    b.onclick=()=>switchChild(b.dataset.switchChild);
+  });
+}
+
 function homeHTML(){
-  const schoolToday = entriesToday('school')[0];
+  const schoolToday = entriesToday(child, 'school')[0];
   const schoolStatus = schoolToday ? schoolToday.status : null;
-  const goodDays = goodDaysThisWeekApproved();
+  const goodDays = goodDaysThisWeekApproved(child);
   const streakDots = Array.from({length:5}).map((_,i)=>`<div class="streak-dot ${i<goodDays?'filled':''}"></div>`).join('');
 
-  const choreCards = state.chores.map(c=>{
-    const todays = entriesToday('chore', c.id);
+  const choreCards = child.chores.map(c=>{
+    const todays = entriesToday(child, 'chore', c.id);
     const approvedCount = todays.filter(e=>e.status==='approved').length;
     const pendingCount = todays.filter(e=>e.status==='pending').length;
     let cls='chore-card', statusHTML='';
@@ -898,12 +1027,12 @@ function homeHTML(){
 }
 
 function prizesHTML(){
-  if(state.prizes.length===0){
+  if(child.prizes.length===0){
     return `<div class="empty-state"><div class="e">🎁</div>No prizes set up yet.</div>`;
   }
-  const cards = state.prizes.map(p=>{
-    const pending = state.entries.some(e=>e.kind==='redeem' && e.refId===p.id && e.status==='pending');
-    const affordable = state.points >= p.cost;
+  const cards = child.prizes.map(p=>{
+    const pending = child.entries.some(e=>e.kind==='redeem' && e.refId===p.id && e.status==='pending');
+    const affordable = child.points >= p.cost;
     return `
     <div class="prize-card ${pending?'requested':''}">
       <div class="prize-emoji">${p.emoji}</div>
@@ -963,7 +1092,7 @@ function weekViewHTML(){
 
 function dayRowHTML(d){
   const dk = dateKey(d);
-  const entries = entriesForDay(dk);
+  const entries = entriesForDay(child, dk);
   const isToday = dk===todayKey();
   const chips = entries.map(e=>{
     const sign = e.kind==='redeem' ? '−' : '+';
@@ -1002,7 +1131,7 @@ function monthViewHTML(){
   const cellsHTML = cells.map(d=>{
     if(!d) return `<div class="cal-cell empty"></div>`;
     const dk = dateKey(d);
-    const approved = entriesForDay(dk).filter(e=>e.status==='approved');
+    const approved = entriesForDay(child, dk).filter(e=>e.status==='approved');
     let earnedPts=0, redeemedPts=0;
     approved.forEach(e=>{
       if(e.kind==='redeem') redeemedPts += e.amount;
@@ -1030,7 +1159,7 @@ function monthViewHTML(){
 }
 
 function dayDetailHTML(dk){
-  const entries = entriesForDay(dk);
+  const entries = entriesForDay(child, dk);
   if(entries.length===0){
     return `<div class="empty-state"><div class="e">📭</div>Nothing this day.</div>`;
   }
@@ -1173,7 +1302,7 @@ document.getElementById('iconOverlay').addEventListener('click', (e)=>{ if(e.tar
 document.getElementById('undoToastBtn').addEventListener('click', performUndo);
 
 buildPinPad();
-ensureWeek();
+ensureWeek(child);
 render();
 scheduleMidnightRefresh();
 
