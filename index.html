@@ -651,6 +651,19 @@
   }
   #lockTagline{transition:opacity 400ms ease;}
   #lockTagline.fade{opacity:0;}
+  .lock-flying-pip{
+    position:absolute; z-index:1; pointer-events:none;
+    width:92px; height:auto; left:-20%; bottom:8%;
+    opacity:0;
+    animation: pipFlyBy 16s ease-in-out infinite; animation-delay:5s;
+  }
+  @keyframes pipFlyBy{
+    0%{ transform:translate(0,0) rotate(-8deg) scale(.9); opacity:0; }
+    8%{ opacity:1; }
+    40%{ transform:translate(160vw,-70vh) rotate(-8deg) scale(1.05); opacity:1; }
+    48%{ opacity:0; }
+    100%{ transform:translate(160vw,-70vh) rotate(-8deg) scale(1.05); opacity:0; }
+  }
 
   .lock-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:16px; width:100%; max-width:420px; margin-top:28px; position:relative; z-index:2;}
   .lock-tile{
@@ -866,6 +879,7 @@
 <!-- KIOSK IDLE LOCK SCREEN -->
 <div class="boot-screen lock-screen" id="kioskLockScreen">
   <div class="lock-shooting-star"></div>
+  <img class="lock-flying-pip" src="pip-flying.png" alt="">
   <div class="lock-twinkles">
     <span class="twinkle" style="top:12%; left:16%; animation-delay:0s;"></span>
     <span class="twinkle gold" style="top:22%; left:72%; animation-delay:.5s;"></span>
