@@ -584,6 +584,14 @@
 
   .lock-screen{display:none;}
   .lock-screen.show{display:flex;}
+  #kioskLockScreen{
+    justify-content:flex-start;
+    padding-top: calc(32px + env(safe-area-inset-top));
+  }
+  .lock-body{
+    flex:1; min-height:0; width:100%;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+  }
 
   /* ---- ambient night-sky scene ---- */
   #kioskLockScreen{
@@ -882,9 +890,11 @@
     <span class="twinkle" style="top:16%; left:60%; animation-delay:.9s;"></span>
   </div>
   <img class="boot-logo" src="logo-horizontal.png" alt="PointPal">
-  <img class="lock-pip" id="lockPipImg" src="pip-wave.png" alt="Pip">
-  <div class="boot-sub" id="lockTagline">Tap your avatar to continue</div>
-  <div class="lock-grid" id="lockGrid"></div>
+  <div class="lock-body">
+    <img class="lock-pip" id="lockPipImg" src="pip-wave.png" alt="Pip">
+    <div class="boot-sub" id="lockTagline">Tap your avatar to continue</div>
+    <div class="lock-grid" id="lockGrid"></div>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
