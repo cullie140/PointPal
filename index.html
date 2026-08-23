@@ -91,11 +91,12 @@
     min-height:124px;
   }
   .meter-label{font-size:12.5px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; opacity:.85; position:relative; z-index:2; display:flex; align-items:center; gap:4px;}
-  .point-core-icon{width:14px; height:14px; object-fit:contain;}
+  .point-core-icon{width:34px; height:34px; object-fit:contain;}
   .meter-value{font-size:38px; font-weight:800; font-family:'Baloo 2'; margin-top:4px; position:relative; z-index:2; display:flex; align-items:baseline; gap:5px;}
   .meter-value small{font-size:16px; font-weight:700; opacity:.85;}
   #pointsMeter{background: linear-gradient(160deg, #6b4a12 0%, #3d2a0c 100%);}
   #pointsMeter .meter-label, #pointsMeter .meter-value{justify-content:flex-end; text-align:right;}
+  #pointsMeter .meter-value{align-items:center; gap:8px;}
   .points-pip{position:absolute; left:8px; bottom:-14px; width:148px; height:auto; z-index:1; pointer-events:none;}
   #minutesMeter{background: linear-gradient(160deg, #362a7a 0%, #1e1650 100%);}
   #minutesMeter .meter-label, #minutesMeter .meter-value{justify-content:flex-end; text-align:right;}
@@ -606,8 +607,8 @@
     <div class="child-switch-row" id="childSwitchRow"></div>
     <div class="meters">
       <div class="meter-card" id="pointsMeter">
-        <div class="meter-label"><img class="point-core-icon" src="pip-point-core.png" alt="">Points</div>
-        <div class="meter-value"><span id="pointsVal">0</span></div>
+        <div class="meter-label">Points</div>
+        <div class="meter-value"><img class="point-core-icon" src="pip-point-core.png" alt=""><span id="pointsVal">0</span></div>
         <img class="points-pip" src="pip-treasure.png" alt="">
       </div>
       <div class="meter-card" id="minutesMeter">
