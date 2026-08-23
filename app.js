@@ -1,7 +1,5 @@
 /* ============ POINTPAL — app logic ============ */
 
-const FISH_EMOJIS = ['🐠','🐟','🐡'];
-
 const ICON_SET = [
   '⭐','✅','💪','❤️','🔥','✨','🎯','🏆',
   '🍽️','🧹','🧺','🛏️','🚿','🪥','🧻','👕',
@@ -2099,10 +2097,6 @@ function render(){
   document.getElementById('pointsVal').textContent = child.points;
   document.getElementById('minutesVal').textContent = child.minutes;
 
-  const pct = Math.max(6, (child.points % 1000)/1000*100);
-  document.getElementById('pointsWater').style.height = pct+'%';
-  refreshFishTank();
-
   const pend = pendingEntries().length;
   const badge = document.getElementById('pendingBadge');
   if(pend>0){ badge.style.display='block'; badge.textContent=pend; } else { badge.style.display='none'; }
@@ -2429,32 +2423,6 @@ function wireMainContent(){
   });
 }
 
-/* ============ FISH TANK DECOR ============ */
-let fishSpawned=false;
-function refreshFishTank(){
-  const meter = document.getElementById('pointsMeter');
-  if(fishSpawned) return;
-  fishSpawned=true;
-  const water = document.getElementById('pointsWater');
-  for(let i=0;i<2;i++){
-    const fish = document.createElement('div');
-    fish.className='fish-icon';
-    fish.textContent = FISH_EMOJIS[i%FISH_EMOJIS.length];
-    fish.style.fontSize = (10+i*2)+'px';
-    fish.style.left = (20+i*40)+'%';
-    fish.style.bottom = (8+i*10)+'px';
-    fish.style.animationDelay = (i*1.4)+'s';
-    water.appendChild(fish);
-  }
-  for(let i=0;i<3;i++){
-    const b = document.createElement('div');
-    b.className='bubble';
-    b.style.left = (15+i*28)+'%';
-    b.style.animationDelay = (i*1.1)+'s';
-    water.appendChild(b);
-  }
-}
-
 /* ============ FEEDBACK FX ============ */
 function toast(msg){
   const t = document.getElementById('toast');
@@ -2611,7 +2579,7 @@ document.getElementById('loginBtn').addEventListener('click', async ()=>{
 
 /* ============ INIT / NAV WIRING ============ */
 document.querySelectorAll('.nav-btn').forEach(b=>{
-  b.addEventListener('click', ()=>{ view=b.dataset.view; fishSpawned = fishSpawned; render(); });
+  b.addEventListener('click', ()=>{ view=b.dataset.view; render(); });
 });
 document.getElementById('lockBtn').addEventListener('click', ()=>openPin({type:'parent'}));
 document.getElementById('pinCancel').addEventListener('click', closePin);

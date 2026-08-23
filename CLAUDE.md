@@ -8,7 +8,7 @@ A multi-child, installable PWA for tracking kids' activities (chores) and earned
   - Tap activity cards to request credit — each activity earns either points or minutes (`currency`), per its own setting. Activities can be repeatable, one-time-per-day, or follow a recurring/one-time **schedule** (daily / certain weekdays / every-other-week / monthly / one-time-only).
   - Browse a **Prizes** tab and request redemptions (spends points). A prize can optionally cap redemptions per day/week (`limitMax`/`limitPeriod`) and a child can pin one prize as a **savings goal**, shown as a progress bar on Home.
   - View a chronological **History** tab (by week or month) of everything requested/approved/denied.
-  - A "tank" header shows current points (a filling water tank with animated fish), screen-time minutes, and the child's own avatar next to their name.
+  - A header meter pair shows current points and screen-time minutes as two large, high-visibility numbers, each backed by Pip artwork in its own color story (a treasure chest for points, Pip watching TV for screen time) — plus the child's own avatar next to their name. This replaced an earlier "tank" motif (a filling water tank with animated fish/bubbles), retired in favor of leaning on Pip everywhere.
   - Home shows, top to bottom when applicable: a savings-goal progress bar, **Active Punishments**, **Active Challenges**, then the activity grid.
 - **Parent side (PIN-gated, default family PIN `1234`; 5-attempt lockout with a 30s cooldown, shared across every PIN attempt — parent or any child):**
   - **Approvals** tab: approve/deny any pending entry, bulk-approve all, 6-second undo toast on a single approve/deny.
