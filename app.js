@@ -880,12 +880,13 @@ function renderLockScreen(){
   const grid = document.getElementById('lockGrid');
   if(!grid) return;
   grid.style.gridTemplateColumns = state.children.length<=1 ? '1fr' : 'repeat(2,1fr)';
-  grid.innerHTML = state.children.map(c=>`
-    <button class="lock-tile" data-lock-child="${c.id}">
+  grid.innerHTML = state.children.map((c,i)=>`
+    <button class="lock-tile" data-lock-child="${c.id}" style="animation-delay:${i*90}ms">
       <div class="lock-tile-avatar">${c.avatar}</div>
       <div class="lock-tile-name">${c.name}</div>
+      <div class="lock-tile-stats"><img class="lock-tile-stat-icon" src="pip-point-core.png" alt="">${c.points} <span>·</span> ${c.minutes} min</div>
     </button>`).join('') + `
-    <button class="lock-tile lock-tile-parent" data-lock-parent="1">
+    <button class="lock-tile lock-tile-parent" data-lock-parent="1" style="animation-delay:${state.children.length*90}ms">
       <div class="lock-tile-avatar">🔐</div>
       <div class="lock-tile-name">Parent</div>
     </button>`;
@@ -895,6 +896,34 @@ function renderLockScreen(){
   const parentTile = grid.querySelector('[data-lock-parent]');
   if(parentTile) parentTile.onclick=()=>openPin({type:'parent'});
 }
+
+const LOCK_TAGLINES = [
+  'Tap your avatar to continue',
+  'Ready for an adventure?',
+  "Let's keep the streak alive!",
+  'Little wins, big adventures.',
+  'Pip is waiting for you!'
+];
+let lockTaglineTimer = null, lockTaglineIndex = 0;
+function startLockTagline(){
+  stopLockTagline();
+  lockTaglineIndex = 0;
+  const el = document.getElementById('lockTagline');
+  if(!el) return;
+  el.textContent = LOCK_TAGLINES[0];
+  lockTaglineTimer = setInterval(()=>{
+    el.classList.add('fade');
+    setTimeout(()=>{
+      lockTaglineIndex = (lockTaglineIndex+1) % LOCK_TAGLINES.length;
+      el.textContent = LOCK_TAGLINES[lockTaglineIndex];
+      el.classList.remove('fade');
+    }, 400);
+  }, 4000);
+}
+function stopLockTagline(){
+  clearInterval(lockTaglineTimer);
+  lockTaglineTimer = null;
+}
 function showLockScreen(){
   if(kioskLocked) return;
   kioskLocked = true;
@@ -902,10 +931,12 @@ function showLockScreen(){
   pinBuffer=''; pinContext=null;
   renderLockScreen();
   document.getElementById('kioskLockScreen').classList.add('show');
+  startLockTagline();
 }
 function hideLockScreen(){
   kioskLocked = false;
   document.getElementById('kioskLockScreen').classList.remove('show');
+  stopLockTagline();
 }
 
 /* ============ PARENT ZONE ============ */

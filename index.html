@@ -576,22 +576,97 @@
     color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center;
     padding:24px; text-align:center;
   }
-  .boot-logo{width:min(300px, 78vw); height:auto; margin-bottom:16px;}
-  .boot-sub{font-size:14px; font-weight:700; opacity:.75; margin-top:6px; margin-bottom:22px;}
+  .boot-logo{width:min(300px, 78vw); height:auto; margin-bottom:16px; position:relative; z-index:2;}
+  .boot-sub{font-size:14px; font-weight:700; opacity:.75; margin-top:6px; margin-bottom:22px; position:relative; z-index:2;}
   .login-form{width:100%; max-width:320px;}
   .login-form input{background:rgba(255,255,255,.95);}
   .login-error{color:#FFD2CB; font-size:13px; font-weight:700; margin-top:10px; min-height:18px;}
 
   .lock-screen{display:none;}
   .lock-screen.show{display:flex;}
-  .lock-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:16px; width:100%; max-width:420px; margin-top:28px;}
+
+  /* ---- ambient night-sky scene ---- */
+  #kioskLockScreen{
+    background: linear-gradient(165deg, #1B1440 0%, #2A3F7C 55%, #3D4E97 100%);
+    overflow:hidden;
+  }
+  #kioskLockScreen::before{
+    content:''; position:absolute; inset:0; z-index:0; pointer-events:none;
+    opacity:.55; animation: starPulse 5s ease-in-out infinite;
+    background-image:
+      radial-gradient(circle 1.3px at 6% 14%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.6px at 14% 40%, #FFC94A 99%, transparent 100%),
+      radial-gradient(circle 1.3px at 24% 8%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.4px at 34% 28%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.5px at 44% 12%, #FFC94A 99%, transparent 100%),
+      radial-gradient(circle 1.3px at 54% 34%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.6px at 64% 18%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.3px at 74% 42%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.5px at 84% 10%, #FFC94A 99%, transparent 100%),
+      radial-gradient(circle 1.3px at 92% 30%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.4px at 10% 62%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.3px at 88% 64%, #fff 99%, transparent 100%);
+  }
+  @keyframes starPulse{ 0%,100%{opacity:.4;} 50%{opacity:.75;} }
+  #kioskLockScreen::after{
+    content:''; position:absolute; inset:0; z-index:0; pointer-events:none;
+    opacity:.4; background-size:70px 110px;
+    background-image: radial-gradient(circle 1.4px, rgba(255,201,74,.9) 99%, transparent 100%);
+    animation: sparkleRise 9s linear infinite;
+  }
+  @keyframes sparkleRise{ from{background-position:0 0;} to{background-position:0 -110px;} }
+  .lock-twinkles{position:absolute; inset:0; z-index:1; pointer-events:none;}
+  .twinkle{
+    position:absolute; width:5px; height:5px; border-radius:50%;
+    background:#fff; box-shadow:0 0 6px 1px rgba(255,255,255,.8);
+    animation: twinkle 2.6s ease-in-out infinite;
+  }
+  .twinkle.gold{background:#FFC94A; box-shadow:0 0 7px 1px rgba(255,201,74,.9);}
+  @keyframes twinkle{ 0%,100%{opacity:.25; transform:scale(.7);} 50%{opacity:1; transform:scale(1.3);} }
+  .lock-shooting-star{
+    position:absolute; top:14%; left:-6%; z-index:1; pointer-events:none;
+    width:3px; height:3px; border-radius:50%; background:#fff;
+    box-shadow: 0 0 8px 2px #fff, 0 0 16px 4px rgba(255,201,74,.6);
+    animation: shootingStar 7s ease-in infinite; animation-delay:3s;
+  }
+  .lock-shooting-star::before{
+    content:''; position:absolute; top:50%; right:0; width:70px; height:1.5px;
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,.9));
+    transform:translateY(-50%);
+  }
+  @keyframes shootingStar{
+    0%{ transform:translate(0,0) rotate(25deg); opacity:0; }
+    5%{ opacity:1; }
+    25%{ transform:translate(120vw, 60vh) rotate(25deg); opacity:0; }
+    100%{ transform:translate(120vw, 60vh) rotate(25deg); opacity:0; }
+  }
+  .lock-pip{
+    width:min(190px, 46vw); height:auto; margin:6px auto 4px; display:block;
+    position:relative; z-index:2;
+    animation: pipFloat 4.5s ease-in-out infinite;
+  }
+  @keyframes pipFloat{
+    0%,100%{ transform:translateY(0) rotate(-2deg); }
+    50%{ transform:translateY(-12px) rotate(2deg); }
+  }
+  #lockTagline{transition:opacity 400ms ease;}
+  #lockTagline.fade{opacity:0;}
+
+  .lock-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:16px; width:100%; max-width:420px; margin-top:28px; position:relative; z-index:2;}
   .lock-tile{
     background:rgba(255,255,255,.08); border:2px solid rgba(255,255,255,.18); border-radius:var(--radius-lg);
-    padding:24px 12px; display:flex; flex-direction:column; align-items:center; gap:10px; color:#fff;
+    padding:24px 12px; display:flex; flex-direction:column; align-items:center; gap:8px; color:#fff;
+    animation: tileIn 420ms cubic-bezier(.34,1.56,.64,1) both;
   }
+  @keyframes tileIn{ from{opacity:0; transform:translateY(16px) scale(.94);} to{opacity:1; transform:translateY(0) scale(1);} }
   .lock-tile:active{transform:scale(.96); background:rgba(255,255,255,.16);}
   .lock-tile-avatar{font-size:48px; line-height:1;}
   .lock-tile-name{font-weight:800; font-size:15px;}
+  .lock-tile-stats{
+    display:flex; align-items:center; justify-content:center; gap:5px;
+    font-size:12px; font-weight:700; opacity:.85;
+  }
+  .lock-tile-stat-icon{width:13px; height:13px; object-fit:contain;}
   .lock-tile-parent{grid-column:1 / -1; background:rgba(255,255,255,.04); border-style:dashed;}
 
   .offline-banner{
@@ -790,8 +865,18 @@
 
 <!-- KIOSK IDLE LOCK SCREEN -->
 <div class="boot-screen lock-screen" id="kioskLockScreen">
+  <div class="lock-shooting-star"></div>
+  <div class="lock-twinkles">
+    <span class="twinkle" style="top:12%; left:16%; animation-delay:0s;"></span>
+    <span class="twinkle gold" style="top:22%; left:72%; animation-delay:.5s;"></span>
+    <span class="twinkle" style="top:8%; left:48%; animation-delay:1s;"></span>
+    <span class="twinkle gold" style="top:34%; left:84%; animation-delay:1.5s;"></span>
+    <span class="twinkle" style="top:30%; left:8%; animation-delay:2s;"></span>
+    <span class="twinkle" style="top:16%; left:60%; animation-delay:.9s;"></span>
+  </div>
   <img class="boot-logo" src="logo-horizontal.png" alt="PointPal">
-  <div class="boot-sub">Tap your avatar to continue</div>
+  <img class="lock-pip" src="pip-message.png" alt="Pip">
+  <div class="boot-sub" id="lockTagline">Tap your avatar to continue</div>
   <div class="lock-grid" id="lockGrid"></div>
 </div>
 
