@@ -60,16 +60,37 @@
 
   /* ---------- HEADER / TANK ---------- */
   .header{
-    background: linear-gradient(180deg, var(--navy) 0%, var(--navy-deep) 100%);
+    background: linear-gradient(180deg, #2A3F7C 0%, #151330 100%);
     padding: calc(18px + env(safe-area-inset-top)) 20px 22px;
     border-radius: 0 0 32px 32px;
     color:#fff;
     position:relative;
     overflow:hidden;
   }
+  .header::before{
+    content:'';
+    position:absolute; inset:0; z-index:0; pointer-events:none;
+    opacity:.6;
+    background-repeat:no-repeat;
+    background-image:
+      radial-gradient(circle, #fff 1px, transparent 1.4px),
+      radial-gradient(circle, #FFC94A 1.6px, transparent 2.1px),
+      radial-gradient(circle, #fff 1px, transparent 1.4px),
+      radial-gradient(circle, #fff 1.2px, transparent 1.6px),
+      radial-gradient(circle, #FFC94A 1.3px, transparent 1.8px),
+      radial-gradient(circle, #fff 1px, transparent 1.4px),
+      radial-gradient(circle, #fff 1.4px, transparent 1.9px),
+      radial-gradient(circle, #fff 1px, transparent 1.4px),
+      radial-gradient(circle, #FFC94A 1.4px, transparent 1.9px),
+      radial-gradient(circle, #fff 1.1px, transparent 1.5px);
+    background-position:
+      8% 18%, 20% 42%, 32% 12%, 46% 32%, 58% 15%,
+      68% 46%, 78% 22%, 88% 38%, 94% 14%, 40% 8%;
+  }
   .header-top{
     display:flex; justify-content:space-between; align-items:center;
     margin-bottom:14px;
+    position:relative; z-index:1;
   }
   .greeting{font-size:22px; font-weight:800; font-family:'Baloo 2';}
   .greeting-sub{font-size:13px; opacity:.75; font-weight:700; margin-top:2px;}
@@ -80,7 +101,7 @@
     display:flex; align-items:center; justify-content:center;
     cursor:pointer;
   }
-  .meters{display:flex; gap:12px;}
+  .meters{display:flex; gap:12px; position:relative; z-index:1;}
   .meter-card{
     flex:1;
     background:rgba(255,255,255,0.08);
@@ -451,7 +472,7 @@
   }
   .lock-wrap{position:relative;}
 
-  .child-switch-row{display:none; gap:8px; margin-bottom:14px;}
+  .child-switch-row{display:none; gap:8px; margin-bottom:14px; position:relative; z-index:1;}
   .child-pill{
     background:rgba(255,255,255,0.1); border:2px solid transparent; color:rgba(255,255,255,.8);
     border-radius:20px; padding:7px 16px; font-weight:800; font-size:13px;
