@@ -320,7 +320,7 @@
     flex:1; background:none; border:none; display:flex; flex-direction:column;
     align-items:center; gap:3px; padding:6px 0; color:var(--ink-soft); font-weight:800; font-size:11px;
   }
-  .nav-btn .ic{font-size:22px;}
+  .nav-btn .ic{width:27px; height:27px; object-fit:contain;}
   .nav-btn.active{color:var(--teal);}
 
   /* MODAL / OVERLAY */
@@ -649,9 +649,9 @@
   <div class="content" id="mainContent"></div>
 
   <div class="navbar">
-    <button class="nav-btn active" data-view="home"><span class="ic">🏠</span>Home</button>
-    <button class="nav-btn" data-view="prizes"><span class="ic">🎁</span>Prizes</button>
-    <button class="nav-btn" data-view="history"><span class="ic">📖</span>History</button>
+    <button class="nav-btn active" data-view="home"><img class="ic" src="nav-home.png" alt="">Home</button>
+    <button class="nav-btn" data-view="prizes"><img class="ic" src="nav-prizes.png" alt="">Prizes</button>
+    <button class="nav-btn" data-view="history"><img class="ic" src="nav-history.png" alt="">History</button>
   </div>
 
 </div>
