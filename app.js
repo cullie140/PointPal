@@ -876,9 +876,28 @@ function startAppIdleWatch(){
   }, 5000);
 }
 
+function pickLockScreenPip(){
+  if(state.children.some(c=>(c.notifications||[]).some(n=>n.kind==='celebration' || n.kind==='comeback'))){
+    return 'pip-celebration.png';
+  }
+  if(state.children.some(c=>activePunishments(c).length>0)){
+    return 'pip-pause.png';
+  }
+  if(state.children.some(c=>(c.challenges||[]).some(ch=>{
+    if(!isChallengeActive(ch, todayKey())) return false;
+    const p = challengeProgress(c, ch);
+    return p>0 && p<ch.target;
+  }))){
+    return 'pip-streak.png';
+  }
+  return 'pip-wave.png';
+}
+
 function renderLockScreen(){
   const grid = document.getElementById('lockGrid');
   if(!grid) return;
+  const pipImg = document.getElementById('lockPipImg');
+  if(pipImg) pipImg.src = pickLockScreenPip();
   grid.style.gridTemplateColumns = state.children.length<=1 ? '1fr' : 'repeat(2,1fr)';
   grid.innerHTML = state.children.map((c,i)=>`
     <button class="lock-tile" data-lock-child="${c.id}" style="animation-delay:${i*90}ms">
