@@ -90,7 +90,8 @@
     overflow:hidden;
     min-height:104px;
   }
-  .meter-label{font-size:11px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; opacity:.8; position:relative; z-index:2;}
+  .meter-label{font-size:11px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; opacity:.8; position:relative; z-index:2; display:flex; align-items:center; gap:4px;}
+  .point-core-icon{width:13px; height:13px; object-fit:contain;}
   .meter-value{font-size:28px; font-weight:800; font-family:'Baloo 2'; margin-top:2px; position:relative; z-index:2; display:flex; align-items:baseline; gap:4px;}
   .meter-value small{font-size:13px; font-weight:700; opacity:.85;}
   .tank-water{
@@ -174,7 +175,10 @@
     background: linear-gradient(135deg, #FFE3E3 0%, #FFEDED 100%);
     border-radius:var(--radius-md); padding:14px 16px; box-shadow:var(--shadow-sm);
     border:2px solid var(--danger);
+    display:flex; align-items:center; gap:14px;
   }
+  .punishment-pip{width:50px; height:50px; object-fit:contain; flex-shrink:0; opacity:.85;}
+  .punishment-info{flex:1; min-width:0;}
   .punishment-label{font-weight:800; font-size:14.5px; color:var(--danger);}
   .punishment-meta{font-size:12.5px; color:var(--ink-soft); font-weight:700; margin-top:2px;}
   .punishment-notice{
@@ -187,7 +191,7 @@
     border-radius:var(--radius-md); padding:14px 16px; box-shadow:var(--shadow-sm);
   }
   .goal-top{display:flex; align-items:center; gap:14px; margin-bottom:10px;}
-  .goal-emoji{font-size:30px; flex-shrink:0;}
+  .goal-pip{width:54px; height:54px; object-fit:contain; flex-shrink:0;}
   .goal-info{flex:1; min-width:0;}
   .goal-title{font-weight:800; font-size:14.5px; color:var(--ink);}
   .goal-sub{font-size:12.5px; color:var(--ink-soft); font-weight:700; margin-top:2px;}
@@ -616,7 +620,7 @@
     <div class="child-switch-row" id="childSwitchRow"></div>
     <div class="meters">
       <div class="meter-card" id="pointsMeter">
-        <div class="meter-label">Points</div>
+        <div class="meter-label"><img class="point-core-icon" src="pip-point-core.png" alt="">Points</div>
         <div class="meter-value"><span id="pointsVal">0</span></div>
         <div class="tank-water" id="pointsWater" style="height:8%;"><div class="tank-wave"></div></div>
       </div>

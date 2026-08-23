@@ -387,7 +387,24 @@ function schedulePunishmentExpiry(){
   const active = activePunishments(child);
   if(!active.length) return;
   const soonest = Math.min(...active.map(p=>p.endsAt));
-  punishmentExpiryTimer = setTimeout(render, Math.max(0, soonest-Date.now())+250);
+  const expiring = active.filter(p=>p.endsAt===soonest);
+  punishmentExpiryTimer = setTimeout(()=>{
+    render();
+    expiring.forEach(notifyPunishmentExpired);
+  }, Math.max(0, soonest-Date.now())+250);
+}
+
+async function notifyPunishmentExpired(p){
+  const notif = { id:'comeback-'+p.id, kind:'comeback', label:p.label, emoji:null, amount:null, currency:null, message:null, ts:Date.now() };
+  try{
+    await sb.from('notifications').insert(toNotificationRow(notif, child.id)).throwOnError();
+    child.notifications = child.notifications || [];
+    child.notifications.push(notif);
+  }catch(err){
+    // duplicate id means another device's own timer already created this notification for the
+    // same expiry -- expected whenever more than one kiosk has this child active, not a real error.
+    if(!(err && err.code==='23505')) handleSyncError(err);
+  }
 }
 
 /* ---------- prize stock limits ---------- */
@@ -1911,9 +1928,13 @@ function wireParentBody(){
     b.onclick=async ()=>{
       if(!requireOnline()) return;
       const id = b.dataset.punishmentDel;
+      const removed = child.punishments.find(p=>p.id===id);
       child.punishments = child.punishments.filter(p=>p.id!==id);
       renderParentBody(); render();
-      try{ await sb.from('punishments').delete().eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
+      try{
+        await sb.from('punishments').delete().eq('id', id).throwOnError();
+        if(removed) await notifyPunishmentExpired(removed);
+      }catch(err){ handleSyncError(err); }
     };
   });
   const addPunishmentBtn = document.getElementById('addPunishmentBtn');
@@ -2129,7 +2150,7 @@ function savingsGoalHTML(){
     <div class="section-title">Savings Goal</div>
     <div class="goal-card">
       <div class="goal-top">
-        <div class="goal-emoji">${goal.emoji}</div>
+        <img class="goal-pip" src="pip-goal.png" alt="Pip">
         <div class="goal-info">
           <div class="goal-title">${goal.label}</div>
           <div class="goal-sub">${child.points}/${goal.cost} pts${met?' · Ready! 🎉':''}</div>
@@ -2147,8 +2168,11 @@ function activePunishmentsHTML(){
     const blocks = [p.blockPoints&&'🪙 points', p.blockMinutes&&'⏰ time', p.blockPrizes&&'🎁 prizes'].filter(Boolean).join(' · ');
     return `
       <div class="punishment-card">
-        <div class="punishment-label">🚫 ${p.label}</div>
-        <div class="punishment-meta">${blocks} blocked — ${formatRemaining(p.endsAt-Date.now())}</div>
+        <img class="punishment-pip" src="pip-pause.png" alt="Pip">
+        <div class="punishment-info">
+          <div class="punishment-label">${p.label}</div>
+          <div class="punishment-meta">${blocks} paused — ${formatRemaining(p.endsAt-Date.now())}</div>
+        </div>
       </div>`;
   }).join('');
   return `
@@ -2493,6 +2517,10 @@ function showNextNotification(){
     img.src = 'pip-message.png';
     title.textContent = 'A message from Pip';
     body.textContent = n.message;
+  } else if(n.kind==='comeback'){
+    img.src = 'pip-comeback.png';
+    title.textContent = 'Welcome back!';
+    body.textContent = `Your "${n.label}" pause is over — let's keep going, ${child.name}!`;
   } else {
     img.src = 'pip-celebration.png';
     title.textContent = `${n.emoji||'🎉'} ${n.label} approved!`.trim();
@@ -2504,7 +2532,7 @@ function showNextNotification(){
     }
   }
   document.getElementById('pipNotifyOverlay').classList.add('show');
-  burstConfetti();
+  if(n.kind==='celebration') burstConfetti();
 }
 
 async function dismissNotification(){
