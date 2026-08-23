@@ -2161,14 +2161,13 @@ function activeChallengesHTML(){
   const active = (child.challenges||[]).filter(ch=>isChallengeActive(ch, todayKey()));
   if(!active.length) return '';
   const cards = active.map(ch=>{
-    const chore = child.chores.find(c=>c.id===ch.choreId);
     const progress = challengeProgress(child, ch);
     const done = progress>=ch.target;
     const cur = ch.currency==='points' ? 'pts' : 'min';
     const daysHTML = ch.type==='onetime' ? `<div class="challenge-days">ends ${ch.endDate}</div>` : '';
     return `
       <div class="challenge-card ${done?'done':''}">
-        <div class="challenge-emoji">${chore ? chore.emoji : '🏆'}</div>
+        <img class="challenge-pip" src="pip-streak.png" alt="Pip">
         <div class="challenge-info">
           <div class="challenge-title">${ch.label}</div>
           <div class="challenge-progress">${progress}/${ch.target} · +${ch.bonus} ${cur}${done?' ✓':''}</div>
