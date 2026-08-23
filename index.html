@@ -61,7 +61,7 @@
   /* ---------- HEADER / TANK ---------- */
   .header{
     background: linear-gradient(180deg, #2A3F7C 0%, #151330 100%);
-    padding: calc(18px + env(safe-area-inset-top)) 20px 22px;
+    padding: calc(18px + env(safe-area-inset-top)) 20px 46px;
     border-radius: 0 0 32px 32px;
     color:#fff;
     position:relative;
@@ -70,22 +70,18 @@
   .header::before{
     content:'';
     position:absolute; inset:0; z-index:0; pointer-events:none;
-    opacity:.6;
-    background-repeat:no-repeat;
+    opacity:.7;
     background-image:
-      radial-gradient(circle, #fff 1px, transparent 1.4px),
-      radial-gradient(circle, #FFC94A 1.6px, transparent 2.1px),
-      radial-gradient(circle, #fff 1px, transparent 1.4px),
-      radial-gradient(circle, #fff 1.2px, transparent 1.6px),
-      radial-gradient(circle, #FFC94A 1.3px, transparent 1.8px),
-      radial-gradient(circle, #fff 1px, transparent 1.4px),
-      radial-gradient(circle, #fff 1.4px, transparent 1.9px),
-      radial-gradient(circle, #fff 1px, transparent 1.4px),
-      radial-gradient(circle, #FFC94A 1.4px, transparent 1.9px),
-      radial-gradient(circle, #fff 1.1px, transparent 1.5px);
-    background-position:
-      8% 18%, 20% 42%, 32% 12%, 46% 32%, 58% 15%,
-      68% 46%, 78% 22%, 88% 38%, 94% 14%, 40% 8%;
+      radial-gradient(circle 1.2px at 8% 22%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.6px at 22% 48%, #FFC94A 99%, transparent 100%),
+      radial-gradient(circle 1.2px at 34% 15%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.4px at 48% 38%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.5px at 60% 18%, #FFC94A 99%, transparent 100%),
+      radial-gradient(circle 1.2px at 70% 50%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.6px at 80% 26%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.2px at 90% 42%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.5px at 96% 16%, #FFC94A 99%, transparent 100%),
+      radial-gradient(circle 1.2px at 42% 8%, #fff 99%, transparent 100%);
   }
   .header-top{
     display:flex; justify-content:space-between; align-items:center;
@@ -101,7 +97,7 @@
     display:flex; align-items:center; justify-content:center;
     cursor:pointer;
   }
-  .meters{display:flex; gap:12px; position:relative; z-index:1;}
+  .meters{display:flex; gap:12px; padding:0 20px; margin:-34px 0 18px;}
   .meter-card{
     flex:1;
     background:rgba(255,255,255,0.08);
@@ -110,6 +106,7 @@
     position:relative;
     overflow:hidden;
     min-height:124px;
+    box-shadow: var(--shadow);
   }
   .meter-label{font-size:12.5px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; opacity:.85; position:relative; z-index:2; display:flex; align-items:center; gap:4px;}
   .point-core-icon{width:34px; height:34px; object-fit:contain;}
@@ -626,17 +623,18 @@
       </div>
     </div>
     <div class="child-switch-row" id="childSwitchRow"></div>
-    <div class="meters">
-      <div class="meter-card" id="pointsMeter">
-        <div class="meter-label">Points</div>
-        <div class="meter-value"><img class="point-core-icon" src="pip-point-core.png" alt=""><span id="pointsVal">0</span></div>
-        <img class="points-pip" src="pip-treasure.png" alt="">
-      </div>
-      <div class="meter-card" id="minutesMeter">
-        <div class="meter-label">Screen Time</div>
-        <div class="meter-value"><span id="minutesVal">0</span><small>min</small></div>
-        <img class="minutes-pip" src="pip-tv.png" alt="">
-      </div>
+  </div>
+
+  <div class="meters">
+    <div class="meter-card" id="pointsMeter">
+      <div class="meter-label">Points</div>
+      <div class="meter-value"><img class="point-core-icon" src="pip-point-core.png" alt=""><span id="pointsVal">0</span></div>
+      <img class="points-pip" src="pip-treasure.png" alt="">
+    </div>
+    <div class="meter-card" id="minutesMeter">
+      <div class="meter-label">Screen Time</div>
+      <div class="meter-value"><span id="minutesVal">0</span><small>min</small></div>
+      <img class="minutes-pip" src="pip-tv.png" alt="">
     </div>
   </div>
 
