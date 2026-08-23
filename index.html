@@ -60,8 +60,15 @@
 
   /* ---------- HEADER / TANK ---------- */
   .header{
-    background: linear-gradient(180deg, #2A3F7C 0%, #151330 100%);
-    padding: calc(18px + env(safe-area-inset-top)) 20px 46px;
+    background: linear-gradient(180deg,
+      #130C33 0%,
+      #221D5C 22%,
+      #3D4E97 48%,
+      #8C9EDB 72%,
+      rgba(140,158,219,0.25) 88%,
+      rgba(140,158,219,0) 100%
+    );
+    padding: calc(18px + env(safe-area-inset-top)) 20px 30px;
     border-radius: 0 0 32px 32px;
     color:#fff;
     position:relative;
@@ -70,18 +77,20 @@
   .header::before{
     content:'';
     position:absolute; inset:0; z-index:0; pointer-events:none;
-    opacity:.7;
+    opacity:.85;
     background-image:
-      radial-gradient(circle 1.2px at 8% 22%, #fff 99%, transparent 100%),
-      radial-gradient(circle 1.6px at 22% 48%, #FFC94A 99%, transparent 100%),
-      radial-gradient(circle 1.2px at 34% 15%, #fff 99%, transparent 100%),
-      radial-gradient(circle 1.4px at 48% 38%, #fff 99%, transparent 100%),
-      radial-gradient(circle 1.5px at 60% 18%, #FFC94A 99%, transparent 100%),
-      radial-gradient(circle 1.2px at 70% 50%, #fff 99%, transparent 100%),
-      radial-gradient(circle 1.6px at 80% 26%, #fff 99%, transparent 100%),
-      radial-gradient(circle 1.2px at 90% 42%, #fff 99%, transparent 100%),
-      radial-gradient(circle 1.5px at 96% 16%, #FFC94A 99%, transparent 100%),
-      radial-gradient(circle 1.2px at 42% 8%, #fff 99%, transparent 100%);
+      radial-gradient(circle 1.3px at 8% 10%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.7px at 22% 20%, #FFC94A 99%, transparent 100%),
+      radial-gradient(circle 1.3px at 34% 6%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.5px at 48% 16%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.6px at 60% 8%, #FFC94A 99%, transparent 100%),
+      radial-gradient(circle 1.3px at 70% 22%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.7px at 80% 12%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.3px at 90% 18%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.6px at 96% 6%, #FFC94A 99%, transparent 100%),
+      radial-gradient(circle 1.3px at 14% 26%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.3px at 42% 28%, #fff 99%, transparent 100%),
+      radial-gradient(circle 1.5px at 55% 30%, #FFC94A 99%, transparent 100%);
   }
   .header-top{
     display:flex; justify-content:space-between; align-items:center;
@@ -97,7 +106,7 @@
     display:flex; align-items:center; justify-content:center;
     cursor:pointer;
   }
-  .meters{display:flex; gap:12px; padding:0 20px; margin:-34px 0 18px;}
+  .meters{display:flex; gap:12px; position:relative; z-index:1;}
   .meter-card{
     flex:1;
     background:rgba(255,255,255,0.08);
@@ -623,18 +632,17 @@
       </div>
     </div>
     <div class="child-switch-row" id="childSwitchRow"></div>
-  </div>
-
-  <div class="meters">
-    <div class="meter-card" id="pointsMeter">
-      <div class="meter-label">Points</div>
-      <div class="meter-value"><img class="point-core-icon" src="pip-point-core.png" alt=""><span id="pointsVal">0</span></div>
-      <img class="points-pip" src="pip-treasure.png" alt="">
-    </div>
-    <div class="meter-card" id="minutesMeter">
-      <div class="meter-label">Screen Time</div>
-      <div class="meter-value"><span id="minutesVal">0</span><small>min</small></div>
-      <img class="minutes-pip" src="pip-tv.png" alt="">
+    <div class="meters">
+      <div class="meter-card" id="pointsMeter">
+        <div class="meter-label">Points</div>
+        <div class="meter-value"><img class="point-core-icon" src="pip-point-core.png" alt=""><span id="pointsVal">0</span></div>
+        <img class="points-pip" src="pip-treasure.png" alt="">
+      </div>
+      <div class="meter-card" id="minutesMeter">
+        <div class="meter-label">Screen Time</div>
+        <div class="meter-value"><span id="minutesVal">0</span><small>min</small></div>
+        <img class="minutes-pip" src="pip-tv.png" alt="">
+      </div>
     </div>
   </div>
 
