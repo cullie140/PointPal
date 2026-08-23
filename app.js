@@ -890,7 +890,7 @@ function pickLockScreenPip(){
   }))){
     return 'pip-streak.png';
   }
-  return 'pip-wave.png';
+  return Math.random()<0.5 ? 'pip-wave.png' : 'pip-flying.png';
 }
 
 function renderLockScreen(){
@@ -901,6 +901,7 @@ function renderLockScreen(){
   grid.style.gridTemplateColumns = state.children.length<=1 ? '1fr' : 'repeat(2,1fr)';
   grid.innerHTML = state.children.map((c,i)=>`
     <button class="lock-tile" data-lock-child="${c.id}" style="animation-delay:${i*90}ms">
+      ${(c.notifications||[]).length>0 ? '<img class="lock-mail-badge" src="badge-mail.png" alt="">' : ''}
       <div class="lock-tile-avatar">${c.avatar}</div>
       <div class="lock-tile-name">${c.name}</div>
       <div class="lock-tile-stats"><img class="lock-tile-stat-icon" src="pip-point-core.png" alt="">${c.points} <span>·</span> ${c.minutes} min</div>

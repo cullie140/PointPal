@@ -651,30 +651,24 @@
   }
   #lockTagline{transition:opacity 400ms ease;}
   #lockTagline.fade{opacity:0;}
-  .lock-flying-pip{
-    position:absolute; z-index:1; pointer-events:none;
-    width:92px; height:auto; left:-20%; bottom:8%;
-    opacity:0;
-    animation: pipFlyBy 16s ease-in-out infinite; animation-delay:5s;
-  }
-  @keyframes pipFlyBy{
-    0%{ transform:translate(0,0) rotate(-8deg) scale(.9); opacity:0; }
-    8%{ opacity:1; }
-    40%{ transform:translate(160vw,-70vh) rotate(-8deg) scale(1.05); opacity:1; }
-    48%{ opacity:0; }
-    100%{ transform:translate(160vw,-70vh) rotate(-8deg) scale(1.05); opacity:0; }
-  }
 
   .lock-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:16px; width:100%; max-width:420px; margin-top:28px; position:relative; z-index:2;}
   .lock-tile{
     background:rgba(255,255,255,.08); border:2px solid rgba(255,255,255,.18); border-radius:var(--radius-lg);
     padding:24px 12px; display:flex; flex-direction:column; align-items:center; gap:8px; color:#fff;
     animation: tileIn 420ms cubic-bezier(.34,1.56,.64,1) both;
+    position:relative;
   }
   @keyframes tileIn{ from{opacity:0; transform:translateY(16px) scale(.94);} to{opacity:1; transform:translateY(0) scale(1);} }
   .lock-tile:active{transform:scale(.96); background:rgba(255,255,255,.16);}
   .lock-tile-avatar{font-size:48px; line-height:1;}
   .lock-tile-name{font-weight:800; font-size:15px;}
+  .lock-mail-badge{
+    position:absolute; top:-9px; right:-9px; width:34px; height:34px; object-fit:contain;
+    filter: drop-shadow(0 3px 6px rgba(0,0,0,.4));
+    animation: mailBounce 1.8s ease-in-out infinite;
+  }
+  @keyframes mailBounce{ 0%,100%{transform:translateY(0) rotate(-4deg);} 50%{transform:translateY(-4px) rotate(4deg);} }
   .lock-tile-stats{
     display:flex; align-items:center; justify-content:center; gap:5px;
     font-size:12px; font-weight:700; opacity:.85;
@@ -879,7 +873,6 @@
 <!-- KIOSK IDLE LOCK SCREEN -->
 <div class="boot-screen lock-screen" id="kioskLockScreen">
   <div class="lock-shooting-star"></div>
-  <img class="lock-flying-pip" src="pip-flying.png" alt="">
   <div class="lock-twinkles">
     <span class="twinkle" style="top:12%; left:16%; animation-delay:0s;"></span>
     <span class="twinkle gold" style="top:22%; left:72%; animation-delay:.5s;"></span>
