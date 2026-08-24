@@ -564,6 +564,30 @@ async function toggleSavingsGoal(prizeId){
   try{ await sb.from('children').update({goal_prize_id: child.goalPrizeId}).eq('id', child.id).throwOnError(); }catch(err){ handleSyncError(err); }
 }
 
+function goalProgressPct(c, points){
+  const goal = c.prizes.find(p=>p.id===c.goalPrizeId);
+  if(!goal || !goal.cost) return null;
+  return Math.min(100, points/goal.cost*100);
+}
+// Queues a 'goal' notification the moment a points-earning approval pushes a
+// child's pinned savings goal across a 25% boundary (25/50/75/100), so it
+// fires occasionally rather than on every single point earned. Never fires
+// backward (a redemption elsewhere lowering the balance) — per the brief,
+// Pip only encourages forward progress, never flags a setback.
+function maybeQueueGoalProgress(c, pointsBefore, e){
+  if(e.kind==='redeem' || e.currency!=='points' || !c.goalPrizeId) return null;
+  const beforePct = goalProgressPct(c, pointsBefore);
+  const afterPct = goalProgressPct(c, c.points);
+  if(beforePct==null || afterPct==null) return null;
+  const beforeStep = Math.floor(beforePct/25), afterStep = Math.floor(afterPct/25);
+  if(afterStep <= beforeStep) return null;
+  const goal = c.prizes.find(p=>p.id===c.goalPrizeId);
+  return {
+    id: uid(), kind:'goal', label: goal.label, emoji: goal.emoji,
+    amount: Math.min(100, afterStep*25), currency: null, message: null, ts: Date.now()
+  };
+}
+
 async function approveEntry(id, opts){
   if(!connectionOk){ if(!(opts && opts.silent)) toast('Offline — try again once reconnected'); return; }
   const owner = findEntryOwner(id);
@@ -573,6 +597,7 @@ async function approveEntry(id, opts){
   if(!(opts && opts.silent)) snapshotForUndo(`Approved "${e.label}"`, c, e, 'pending');
   e.status='approved';
 
+  const pointsBefore = c.points;
   if(e.kind==='chore' || e.kind==='bonus'){
     if(e.currency==='points') c.points += e.amount;
     else c.minutes += e.amount;
@@ -583,12 +608,15 @@ async function approveEntry(id, opts){
   }
 
   const notif = {
-    id: uid(), kind:'celebration', label: e.label, emoji: e.emoji,
+    id: uid(), kind: e.kind==='bonus' ? 'streak' : 'celebration', label: e.label, emoji: e.emoji,
     amount: e.kind==='redeem' ? null : e.amount, currency: e.kind==='redeem' ? null : e.currency,
     message: null, ts: Date.now()
   };
   c.notifications = c.notifications || [];
   c.notifications.push(notif);
+
+  const goalNotif = maybeQueueGoalProgress(c, pointsBefore, e);
+  if(goalNotif) c.notifications.push(goalNotif);
 
   const newBonuses = checkChallengesForApproval(c, e, 'pending');
   if(newBonuses.length){
@@ -601,6 +629,7 @@ async function approveEntry(id, opts){
     await sb.from('entries').update({status:'approved'}).eq('id', id).throwOnError();
     await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id).throwOnError();
     await sb.from('notifications').insert(toNotificationRow(notif, c.id)).throwOnError();
+    if(goalNotif) await sb.from('notifications').insert(toNotificationRow(goalNotif, c.id)).throwOnError();
     for(const b of newBonuses) await sb.from('entries').insert(toEntryRow(b, c.id)).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
@@ -1632,10 +1661,12 @@ function parentSettingsHTML(){
 const PIP_VOICE_CATEGORY_LABELS = {
   opener: 'Opener — generic, plays first',
   closer: 'Closer — generic, plays last',
-  celebration: 'Celebration — activity approved',
+  points: 'Points earned — activity approved (points)',
+  minutes: 'Minutes earned — activity approved (screen time)',
   redeem: 'Redeem — prize approved',
   comeback: 'Comeback — punishment lifted',
-  streak: 'Streak — reserved, not wired up yet'
+  goal: 'Goal progress — crosses 25/50/75/100% of a savings goal',
+  streak: 'Streak — a challenge bonus is approved'
 };
 
 function settingsVoiceLinesHTML(){
@@ -2682,10 +2713,10 @@ function burstConfetti(){
 // file to voices/ on GitHub, then pair it with its text/moment in the app.
 const PIP_VOICE_OPENERS = [];
 const PIP_VOICE_CLOSERS = [];
-const PIP_VOICE_CONTEXT = { celebration: [], redeem: [], comeback: [], streak: [] };
+const PIP_VOICE_CONTEXT = { points: [], minutes: [], redeem: [], comeback: [], goal: [], streak: [] };
 const PIP_VOICE_GAP_MS = 120;
 const PIP_VOICE_BEAT_CHANCE = 0.7; // chance an opener/closer plays at all
-const PIP_VOICE_CATEGORIES = ['opener', 'closer', 'celebration', 'redeem', 'comeback', 'streak'];
+const PIP_VOICE_CATEGORIES = ['opener', 'closer', 'points', 'minutes', 'redeem', 'comeback', 'goal', 'streak'];
 const VOICE_FILES_FOLDER = 'voices';
 const VOICE_FILES_API_URL = 'https://api.github.com/repos/cullie140/PointPal/contents/' + VOICE_FILES_FOLDER;
 let voiceFileOptions = null; // null = not fetched yet this session; [] once loaded (possibly empty)
@@ -2693,7 +2724,7 @@ let voiceFileOptions = null; // null = not fetched yet this session; [] once loa
 // Rebuilds the in-memory banks above from state.voiceLines — call after any
 // fetch/realtime refresh and after a local add/delete in the admin tab.
 function rebuildVoiceBanks(){
-  const byCategory = { opener:[], closer:[], celebration:[], redeem:[], comeback:[], streak:[] };
+  const byCategory = { opener:[], closer:[], points:[], minutes:[], redeem:[], comeback:[], goal:[], streak:[] };
   (state.voiceLines||[]).forEach(v=>{
     if(byCategory[v.category]) byCategory[v.category].push({file: VOICE_FILES_FOLDER+'/'+v.file, text:v.text});
   });
@@ -2775,12 +2806,24 @@ function showNextNotification(){
     title.textContent = 'Welcome back!';
     const spoken = playPipVoice('comeback');
     body.textContent = (spoken ? spoken+' ' : '') + `Your "${n.label}" pause is over — let's keep going, ${child.name}!`;
+  } else if(n.kind==='goal'){
+    img.src = 'pip-goal.png';
+    title.textContent = `${n.emoji||'🎯'} ${n.label}`.trim();
+    const spoken = playPipVoice('goal');
+    const detail = n.amount>=100 ? `You've saved up enough — go get it!` : `You're ${n.amount}% of the way there!`;
+    body.textContent = (spoken ? spoken+' ' : '') + detail;
+  } else if(n.kind==='streak'){
+    img.src = 'pip-streak.png';
+    title.textContent = `${n.emoji||'🏆'} ${n.label}`.trim();
+    const cur = n.currency==='points' ? 'pts' : 'min';
+    const spoken = playPipVoice('streak');
+    body.textContent = (spoken ? spoken+' ' : '') + `+${n.amount} ${cur} — you're on fire, ${child.name}!`;
   } else {
     img.src = 'pip-celebration.png';
     title.textContent = `${n.emoji||'🎉'} ${n.label} approved!`.trim();
     if(n.currency){
       const cur = n.currency==='points' ? 'pts' : 'min';
-      const spoken = playPipVoice('celebration');
+      const spoken = playPipVoice(n.currency==='points' ? 'points' : 'minutes');
       body.textContent = (spoken ? spoken+' ' : '') + `+${n.amount} ${cur} — nice work, ${child.name}!`;
     } else {
       const spoken = playPipVoice('redeem');
@@ -2788,7 +2831,7 @@ function showNextNotification(){
     }
   }
   document.getElementById('pipNotifyOverlay').classList.add('show');
-  if(n.kind==='celebration') burstConfetti();
+  if(n.kind==='celebration' || n.kind==='streak') burstConfetti();
 }
 
 async function dismissNotification(){
