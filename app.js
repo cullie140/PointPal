@@ -2508,6 +2508,10 @@ function toast(msg){
   toast._tm = setTimeout(()=>t.classList.remove('show'), 2200);
 }
 
+function showUpdateToast(){
+  document.getElementById('updateToast').classList.add('show');
+}
+
 function spawnFloaterAt(evt, text, color){
   const layer = document.getElementById('floaters');
   const f = document.createElement('div');
@@ -2658,6 +2662,7 @@ document.querySelectorAll('.nav-btn').forEach(b=>{
   b.addEventListener('click', ()=>{ view=b.dataset.view; render(); });
 });
 document.getElementById('lockBtn').addEventListener('click', ()=>openPin({type:'parent'}));
+document.getElementById('exitProfileBtn').addEventListener('click', ()=>showLockScreen());
 document.getElementById('pinCancel').addEventListener('click', closePin);
 document.getElementById('parentClose').addEventListener('click', closeParent);
 document.querySelectorAll('[data-ptab]').forEach(b=>{
@@ -2717,9 +2722,22 @@ boot();
 
 /* register service worker */
 if('serviceWorker' in navigator){
-  window.addEventListener('load', ()=>{
-    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  // If the page is already controlled by a SW from a previous visit, a later
+  // controllerchange means a new version just took over — worth telling the
+  // user. On a fresh install there's no prior controller, so that first
+  // claim never triggers the toast.
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+    if(hadController) showUpdateToast();
   });
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').then(reg=>{
+      // Kiosk tablets can stay open for days without a normal navigation,
+      // which is usually what triggers the browser's own update check.
+      setInterval(()=>reg.update().catch(()=>{}), 60*60*1000);
+    }).catch(()=>{});
+  });
+  document.getElementById('updateToastBtn').addEventListener('click', ()=>location.reload());
 }
 
 /* shake keyframes injected (used by pin dots on wrong entry) */
