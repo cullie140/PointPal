@@ -534,6 +534,22 @@
   }
   .icon-grid button:active{transform:scale(.92); border-color:var(--teal-light);}
 
+  .icon-type-row{display:flex; gap:8px; margin:6px 0 14px;}
+  .icon-type-input{
+    flex:1; min-width:0; border:2px solid #E4ECEE; border-radius:12px; padding:10px 12px;
+    font-size:22px; font-family:'Nunito'; text-align:center;
+  }
+  .icon-type-input:focus{border-color:var(--teal-light); outline:none;}
+  .icon-type-use-btn{
+    flex-shrink:0; border:none; border-radius:12px; padding:0 18px;
+    background:var(--teal); color:#fff; font-weight:800; font-size:14px;
+  }
+  .icon-type-use-btn:active{transform:scale(.95);}
+  .icon-grid-label{
+    font-size:12px; font-weight:800; color:var(--ink-soft); margin:0 0 4px;
+    text-transform:uppercase; letter-spacing:.03em;
+  }
+
   .manual-grid{display:flex; flex-direction:column; gap:14px; margin-top:2px;}
   .manual-tile{
     border:none; border-radius:var(--radius-lg); box-shadow:var(--shadow-sm);

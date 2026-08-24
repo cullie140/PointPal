@@ -1,5 +1,7 @@
 /* ============ POINTPAL — app logic ============ */
 
+const EMOJI_INPUT_RE = /\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
+
 const ICON_SET = [
   '⭐','✅','💪','❤️','🔥','✨','🎯','🏆',
   '🍽️','🧹','🧺','🛏️','🚿','🪥','🧻','👕',
@@ -1167,7 +1169,14 @@ function parentPrizesHTML(){
 
 function iconPickerHTML(){
   const set = (iconPickerContext && iconPickerContext.type==='childAvatar') ? AVATAR_SET : ICON_SET;
-  return `<div class="icon-grid">${set.map(ic=>`<button data-icon="${ic}">${ic}</button>`).join('')}</div>`;
+  return `
+    <div class="icon-type-row">
+      <input id="iconTypeInput" class="icon-type-input" type="text" placeholder="Type any emoji…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button class="icon-type-use-btn" id="iconTypeUseBtn">Use</button>
+    </div>
+    <div class="icon-grid-label">Quick picks</div>
+    <div class="icon-grid">${set.map(ic=>`<button data-icon="${ic}">${ic}</button>`).join('')}</div>
+  `;
 }
 function openIconPicker(ctx){
   iconPickerContext = ctx;
@@ -1177,6 +1186,22 @@ function openIconPicker(ctx){
   document.querySelectorAll('#iconPickerBody [data-icon]').forEach(b=>{
     b.onclick=()=>pickIcon(b.dataset.icon);
   });
+  const typeInput = document.getElementById('iconTypeInput');
+  const useBtn = document.getElementById('iconTypeUseBtn');
+  if(typeInput){
+    // Native emoji keyboards insert a whole emoji in one shot, so as soon as
+    // the field contains one we can apply it immediately — no extra tap needed.
+    typeInput.oninput = ()=>{
+      const val = typeInput.value.trim();
+      if(val && EMOJI_INPUT_RE.test(val)) pickIcon(val);
+    };
+  }
+  if(useBtn){
+    useBtn.onclick=()=>{
+      const val = typeInput ? typeInput.value.trim() : '';
+      if(val) pickIcon(val);
+    };
+  }
   document.getElementById('iconOverlay').classList.add('show');
 }
 function closeIconPicker(){
