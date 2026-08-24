@@ -1720,6 +1720,7 @@ function parentSettingsHTML(){
 }
 
 const PIP_VOICE_CATEGORY_LABELS = {
+  name: "Name — plays before everything else, once per batch (type the child's own name as the text, e.g. \"Henry\")",
   opener: 'Opener — generic, plays first',
   closer: 'Closer — generic, plays last',
   points: 'Points earned — activity approved (points)',
@@ -2842,24 +2843,47 @@ function burstConfetti(){
 // file to voices/ on GitHub, then pair it with its text/moment in the app.
 const PIP_VOICE_OPENERS = [];
 const PIP_VOICE_CLOSERS = [];
+// Not keyed by moment like PIP_VOICE_CONTEXT — matched at pick-time by
+// comparing each entry's own text to whichever child is currently active
+// (pickNameClip), since a name clip belongs to one specific kid, not a kind
+// of moment. Supports multiple clips per child (a random one is picked).
+const PIP_VOICE_NAMES = [];
 const PIP_VOICE_CONTEXT = { points: [], minutes: [], redeem: [], comeback: [], goal: [], streak: [] };
 const PIP_VOICE_GAP_MS = 120;
 const PIP_VOICE_BEAT_CHANCE = 0.7; // chance an opener/closer plays at all
-const PIP_VOICE_CATEGORIES = ['opener', 'closer', 'points', 'minutes', 'redeem', 'comeback', 'goal', 'streak'];
+const PIP_VOICE_CATEGORIES = ['name', 'opener', 'closer', 'points', 'minutes', 'redeem', 'comeback', 'goal', 'streak'];
 const VOICE_FILES_FOLDER = 'voices';
 const VOICE_FILES_API_URL = 'https://api.github.com/repos/cullie140/PointPal/contents/' + VOICE_FILES_FOLDER;
 let voiceFileOptions = null; // null = not fetched yet this session; [] once loaded (possibly empty)
+// True once the name/opener beats have each been *attempted* (played or
+// not — a failed 70% roll still counts as attempted) during the current
+// notification "batch" (deliverPendingNotifications() through the queue
+// draining to empty) — reset only when a fresh batch starts, so each plays
+// at most once per sitting instead of once per queued notification. The
+// closer needs no equivalent flag: it's gated on being the *last* item in
+// the queue instead, which by construction only one notification ever is.
+let pipNameAnnounced = false;
+let pipOpenerPlayed = false;
 
 // Rebuilds the in-memory banks above from state.voiceLines — call after any
 // fetch/realtime refresh and after a local add/delete in the admin tab.
 function rebuildVoiceBanks(){
-  const byCategory = { opener:[], closer:[], points:[], minutes:[], redeem:[], comeback:[], goal:[], streak:[] };
+  const byCategory = { name:[], opener:[], closer:[], points:[], minutes:[], redeem:[], comeback:[], goal:[], streak:[] };
   (state.voiceLines||[]).forEach(v=>{
     if(byCategory[v.category]) byCategory[v.category].push({file: VOICE_FILES_FOLDER+'/'+v.file, text:v.text});
   });
+  PIP_VOICE_NAMES.length = 0; PIP_VOICE_NAMES.push(...byCategory.name);
   PIP_VOICE_OPENERS.length = 0; PIP_VOICE_OPENERS.push(...byCategory.opener);
   PIP_VOICE_CLOSERS.length = 0; PIP_VOICE_CLOSERS.push(...byCategory.closer);
   Object.keys(PIP_VOICE_CONTEXT).forEach(k=>{ PIP_VOICE_CONTEXT[k].length = 0; PIP_VOICE_CONTEXT[k].push(...byCategory[k]); });
+}
+
+// Case/whitespace-insensitive match against the child's own name — a name
+// clip's transcript IS the name it says, so this is the natural key.
+function pickNameClip(childName){
+  if(!childName) return null;
+  const matches = PIP_VOICE_NAMES.filter(n=>n.text.trim().toLowerCase()===childName.trim().toLowerCase());
+  return matches.length ? pickRandom(matches) : null;
 }
 
 // Lists what's currently in the repo's voices/ folder via GitHub's public,
@@ -2898,10 +2922,19 @@ function playClipSequence(files, i){
 function playPipVoice(moment){
   const context = PIP_VOICE_CONTEXT[moment];
   if(!context || !context.length) return null; // nothing recorded for this moment yet
+  const isLastInBatch = !child.notifications || child.notifications.length<=1;
   const beats = [];
-  if(PIP_VOICE_OPENERS.length && Math.random() < PIP_VOICE_BEAT_CHANCE) beats.push(pickRandom(PIP_VOICE_OPENERS));
+  if(!pipNameAnnounced){
+    const nameClip = pickNameClip(child.name);
+    if(nameClip) beats.push(nameClip);
+    pipNameAnnounced = true; // settled for this batch either way — never retried mid-batch
+  }
+  if(!pipOpenerPlayed){
+    if(PIP_VOICE_OPENERS.length && Math.random() < PIP_VOICE_BEAT_CHANCE) beats.push(pickRandom(PIP_VOICE_OPENERS));
+    pipOpenerPlayed = true; // one roll of the dice per batch, win or lose
+  }
   beats.push(pickRandom(context));
-  if(PIP_VOICE_CLOSERS.length && Math.random() < PIP_VOICE_BEAT_CHANCE) beats.push(pickRandom(PIP_VOICE_CLOSERS));
+  if(isLastInBatch && PIP_VOICE_CLOSERS.length && Math.random() < PIP_VOICE_BEAT_CHANCE) beats.push(pickRandom(PIP_VOICE_CLOSERS));
   playClipSequence(beats.map(b=>b.file));
   return beats.map(b=>b.text).join(' ');
 }
@@ -2914,6 +2947,7 @@ function deliverPendingNotifications(){
   const parentOverlay = document.getElementById('parentOverlay');
   if(parentOverlay && parentOverlay.classList.contains('show')) return;
   if(document.getElementById('pipNotifyOverlay').classList.contains('show')) return;
+  pipNameAnnounced = false; pipOpenerPlayed = false; // a fresh batch is starting
   showNextNotification();
 }
 
