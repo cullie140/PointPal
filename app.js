@@ -84,12 +84,15 @@ let child = null;
 let authUserId = null;
 let connectionOk = true;
 
-function switchChild(id){
+function switchChild(id, opts){
   const c = state.children.find(x=>x.id===id);
   if(!c) return;
   state.activeChildId = id;
   child = c;
   localStorage.setItem(ACTIVE_CHILD_KEY, id);
+  // A parent-session bypass switch (no PIN) is still the parent driving, not
+  // the child, so it should never arm that child's Pip notifications.
+  if(!(opts && opts.viaParentSession)) notificationsArmed = true;
   render();
   deliverPendingNotifications();
 }
@@ -146,7 +149,7 @@ async function insertChildFull(c){
 }
 
 async function fetchCloudState(){
-  const [childrenRes, choresRes, prizesRes, challengesRes, punishmentsRes, entriesRes, notificationsRes, settingsRes] = await Promise.all([
+  const [childrenRes, choresRes, prizesRes, challengesRes, punishmentsRes, entriesRes, notificationsRes, settingsRes, voiceLinesRes] = await Promise.all([
     sb.from('children').select('*').order('created_at'),
     sb.from('chores').select('*'),
     sb.from('prizes').select('*'),
@@ -154,9 +157,10 @@ async function fetchCloudState(){
     sb.from('punishments').select('*'),
     sb.from('entries').select('*'),
     sb.from('notifications').select('*'),
-    sb.from('family_settings').select('*').maybeSingle()
+    sb.from('family_settings').select('*').maybeSingle(),
+    sb.from('pip_voice_lines').select('*')
   ]);
-  const firstError = childrenRes.error || choresRes.error || prizesRes.error || challengesRes.error || punishmentsRes.error || entriesRes.error || notificationsRes.error || settingsRes.error;
+  const firstError = childrenRes.error || choresRes.error || prizesRes.error || challengesRes.error || punishmentsRes.error || entriesRes.error || notificationsRes.error || settingsRes.error || voiceLinesRes.error;
   if(firstError) throw firstError;
 
   let childRows = childrenRes.data;
@@ -176,7 +180,12 @@ async function fetchCloudState(){
   else { await sb.from('family_settings').insert({pin:'1234'}).throwOnError(); }
 
   const children = childRows.map(cr => rowsToChild(cr, choreRows, prizeRows, challengeRows, punishmentRows, entriesRes.data, notificationsRes.data));
-  return { pin, children };
+  const voiceLines = (voiceLinesRes.data||[]).map(r=>({id:r.id, category:r.category, file:r.file, text:r.phrase}));
+  return { pin, children, voiceLines };
+}
+
+function toVoiceLineRow(v){
+  return { id:v.id, category:v.category, file:v.file, phrase:v.text };
 }
 
 function handleSyncError(error){
@@ -197,6 +206,8 @@ function scheduleRefetch(){
       const activeId = child ? child.id : null;
       state.pin = cloud.pin;
       state.children = cloud.children;
+      state.voiceLines = cloud.voiceLines;
+      rebuildVoiceBanks();
       child = state.children.find(c=>c.id===activeId) || state.children[0];
       state.activeChildId = child.id;
       connectionOk = true;
@@ -220,6 +231,7 @@ function subscribeRealtime(){
     .on('postgres_changes', {event:'*', schema:'public', table:'punishments', filter}, scheduleRefetch)
     .on('postgres_changes', {event:'*', schema:'public', table:'entries', filter}, scheduleRefetch)
     .on('postgres_changes', {event:'*', schema:'public', table:'notifications', filter}, scheduleRefetch)
+    .on('postgres_changes', {event:'*', schema:'public', table:'pip_voice_lines', filter}, scheduleRefetch)
     .subscribe((status)=>{
       if(status==='SUBSCRIBED'){ connectionOk = true; updateOfflineBanner(); }
       else if(status==='CHANNEL_ERROR' || status==='TIMED_OUT' || status==='CLOSED'){ connectionOk = false; updateOfflineBanner(); }
@@ -864,6 +876,20 @@ const APP_IDLE_MS = 30000; // drop to the lock screen after 30 idle seconds
 let appLastActivity = 0;
 let appIdleChecker = null;
 let kioskLocked = false;
+// True only right after a child's own PIN is entered (switchChild()) — the one
+// moment we know the person looking at the screen actually is that child.
+// Login, the lock screen, and Parent Zone all disarm it, so a stale "last
+// active child" session can't leak that child's Pip notifications to whoever
+// is actually holding the tablet (e.g. a parent who just closed Parent Zone).
+let notificationsArmed = false;
+// True from a successful parent-PIN entry until the lock screen reappears
+// (idle timeout or the exit-profile button). While true, re-entering Parent
+// Zone and switching between children from the in-app switcher both skip the
+// PIN pad — the parent is already credentialed, so re-asking per child is
+// just friction. Deliberately does NOT skip the lock screen's own tiles, and
+// switching this way never arms notificationsArmed (the parent is still the
+// one driving, not the child).
+let parentSessionActive = false;
 
 function resetAppIdleTimer(){ appLastActivity = Date.now(); }
 function startAppIdleWatch(){
@@ -949,6 +975,8 @@ function stopLockTagline(){
 function showLockScreen(){
   if(kioskLocked) return;
   kioskLocked = true;
+  notificationsArmed = false;
+  parentSessionActive = false;
   document.querySelectorAll('.overlay.show').forEach(el=>el.classList.remove('show'));
   pinBuffer=''; pinContext=null;
   renderLockScreen();
@@ -963,6 +991,8 @@ function hideLockScreen(){
 
 /* ============ PARENT ZONE ============ */
 function openParent(){
+  notificationsArmed = false;
+  parentSessionActive = true;
   activeParentTab='approve';
   settingsTab='profile';
   manualEntryType=null;
@@ -1586,15 +1616,66 @@ function parentSettingsHTML(){
       <button class="subtab-btn ${settingsTab==='points'?'active':''}" data-stab="points">Points &amp; Time</button>
       <button class="subtab-btn ${settingsTab==='manual'?'active':''}" data-stab="manual">Manual Entries</button>
       <button class="subtab-btn ${settingsTab==='message'?'active':''}" data-stab="message">Message</button>
+      <button class="subtab-btn ${settingsTab==='voice'?'active':''}" data-stab="voice">Voice Lines</button>
       <button class="subtab-btn ${settingsTab==='data'?'active':''}" data-stab="data">Data</button>
     </div>`;
   let body;
   if(settingsTab==='points') body = settingsPointsHTML();
   else if(settingsTab==='manual') body = settingsManualHTML();
   else if(settingsTab==='message') body = settingsMessageHTML();
+  else if(settingsTab==='voice') body = settingsVoiceLinesHTML();
   else if(settingsTab==='data') body = settingsDataHTML();
   else body = settingsProfileHTML();
   return tabs + body;
+}
+
+const PIP_VOICE_CATEGORY_LABELS = {
+  opener: 'Opener — generic, plays first',
+  closer: 'Closer — generic, plays last',
+  celebration: 'Celebration — activity approved',
+  redeem: 'Redeem — prize approved',
+  comeback: 'Comeback — punishment lifted',
+  streak: 'Streak — reserved, not wired up yet'
+};
+
+function settingsVoiceLinesHTML(){
+  const fileOptionsHTML = voiceFileOptions === null
+    ? `<option value="">Loading files from GitHub…</option>`
+    : voiceFileOptions.length
+      ? `<option value="">Pick a file…</option>` + voiceFileOptions.map(f=>`<option value="${f}">${f}</option>`).join('')
+      : `<option value="">No audio files found in /${VOICE_FILES_FOLDER} on GitHub</option>`;
+
+  const lines = (state.voiceLines||[]).slice().sort((a,b)=> a.category<b.category ? -1 : a.category>b.category ? 1 : 0);
+  const rows = lines.length ? lines.map(v=>`
+    <div class="list-edit-item">
+      <div class="item-row-main">
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:11px; font-weight:800; letter-spacing:.03em; text-transform:uppercase; color:var(--teal);">${v.category}</div>
+          <div style="font-weight:700; font-size:14px; margin-top:2px;">${v.text}</div>
+          <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">${v.file}</div>
+        </div>
+        <button class="icon-btn-sm" data-delete-voice="${v.id}">Delete</button>
+      </div>
+    </div>
+  `).join('') : `<div class="sheet-sub">No voice lines yet.</div>`;
+
+  return `
+    <div class="sheet-sub" style="margin-bottom:8px;">
+      Drop an audio file into the <b>${VOICE_FILES_FOLDER}/</b> folder on GitHub, then pair it below with what it says and which moment it plays for. No code changes needed — new files show up here once pushed.
+    </div>
+    <button class="icon-btn-sm" id="refreshVoiceFilesBtn" style="margin-bottom:12px;">↻ Refresh file list</button>
+    <div class="add-row" style="flex-wrap:wrap;">
+      <select id="voiceCategorySelect" class="child-name-input" style="flex:1 1 100%;">
+        ${PIP_VOICE_CATEGORIES.map(c=>`<option value="${c}">${PIP_VOICE_CATEGORY_LABELS[c]}</option>`).join('')}
+      </select>
+      <select id="voiceFileSelect" class="child-name-input" style="flex:1 1 100%; margin-top:8px;">
+        ${fileOptionsHTML}
+      </select>
+      <input type="text" id="voiceTextInput" class="child-name-input" style="flex:1 1 100%; margin-top:8px;" placeholder="What this clip says, e.g. Another spark for the trail.">
+      <button class="btn btn-primary" id="addVoiceLineBtn" style="margin-top:8px;">Add Voice Line</button>
+    </div>
+    <div style="margin-top:16px;">${rows}</div>
+  `;
 }
 
 function settingsMessageHTML(){
@@ -2052,9 +2133,46 @@ function wireParentBody(){
       try{ await sb.from('notifications').delete().eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
     };
   });
+  const refreshVoiceFilesBtn = document.getElementById('refreshVoiceFilesBtn');
+  if(refreshVoiceFilesBtn) refreshVoiceFilesBtn.onclick=async ()=>{
+    refreshVoiceFilesBtn.textContent = 'Refreshing…';
+    await fetchVoiceFileOptions(true);
+    renderParentBody();
+  };
+  const addVoiceLineBtn = document.getElementById('addVoiceLineBtn');
+  if(addVoiceLineBtn) addVoiceLineBtn.onclick=async ()=>{
+    if(!requireOnline()) return;
+    const category = document.getElementById('voiceCategorySelect').value;
+    const file = document.getElementById('voiceFileSelect').value;
+    const textInput = document.getElementById('voiceTextInput');
+    const text = textInput.value.trim();
+    if(!file){ toast('Pick an audio file'); return; }
+    if(!text){ toast('Enter the matching text'); return; }
+    const line = { id:uid(), category, file, text };
+    state.voiceLines = state.voiceLines || [];
+    state.voiceLines.push(line);
+    rebuildVoiceBanks();
+    renderParentBody();
+    try{ await sb.from('pip_voice_lines').insert(toVoiceLineRow(line)).throwOnError(); }catch(err){ handleSyncError(err); }
+  };
+  document.querySelectorAll('[data-delete-voice]').forEach(b=>{
+    b.onclick=async ()=>{
+      if(!requireOnline()) return;
+      const id = b.dataset.deleteVoice;
+      state.voiceLines = (state.voiceLines||[]).filter(v=>v.id!==id);
+      rebuildVoiceBanks();
+      renderParentBody();
+      try{ await sb.from('pip_voice_lines').delete().eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
+    };
+  });
 
   document.querySelectorAll('[data-stab]').forEach(b=>{
-    b.onclick=()=>{ settingsTab = b.dataset.stab; manualEntryType = null; renderParentBody(); };
+    b.onclick=()=>{
+      settingsTab = b.dataset.stab; manualEntryType = null; renderParentBody();
+      if(settingsTab==='voice' && voiceFileOptions===null){
+        fetchVoiceFileOptions().then(()=>{ if(settingsTab==='voice') renderParentBody(); });
+      }
+    };
   });
   document.querySelectorAll('[data-manual-open]').forEach(b=>{
     b.onclick=()=>{ manualEntryType = b.dataset.manualOpen; renderParentBody(); };
@@ -2206,6 +2324,7 @@ function renderChildSwitcher(){
     b.onclick=()=>{
       const id = b.dataset.switchChild;
       if(id===child.id) return;
+      if(parentSessionActive){ switchChild(id, {viaParentSession:true}); return; }
       openPin({type:'child', childId:id});
     };
   });
@@ -2545,8 +2664,91 @@ function burstConfetti(){
   }
 }
 
+/* ============ PIP VOICE LINES ============ */
+// Generic interjection banks, reused across every moment — mixed with a
+// short moment-specific line so full sentences aren't pre-recorded, and
+// randomly dropped ~30% of the time so the same 3-beat shape doesn't become
+// its own detectable pattern. Each entry carries its own transcript
+// ({file, text}) so the notification's on-screen text is built from exactly
+// what got spoken, rather than being a second, independently-written line
+// that could drift out of sync with the audio.
+//
+// The banks themselves are NOT hand-edited here — they're rebuilt by
+// rebuildVoiceBanks() from state.voiceLines (the pip_voice_lines table),
+// managed entirely from Parent Zone → Settings → Voice Lines. Audio files
+// live in the voices/ folder of the GitHub repo; the admin tab lists what's
+// currently in there via GitHub's public Contents API (fetchVoiceFileOptions
+// below) so adding a new line never requires a code change — just push a
+// file to voices/ on GitHub, then pair it with its text/moment in the app.
+const PIP_VOICE_OPENERS = [];
+const PIP_VOICE_CLOSERS = [];
+const PIP_VOICE_CONTEXT = { celebration: [], redeem: [], comeback: [], streak: [] };
+const PIP_VOICE_GAP_MS = 120;
+const PIP_VOICE_BEAT_CHANCE = 0.7; // chance an opener/closer plays at all
+const PIP_VOICE_CATEGORIES = ['opener', 'closer', 'celebration', 'redeem', 'comeback', 'streak'];
+const VOICE_FILES_FOLDER = 'voices';
+const VOICE_FILES_API_URL = 'https://api.github.com/repos/cullie140/PointPal/contents/' + VOICE_FILES_FOLDER;
+let voiceFileOptions = null; // null = not fetched yet this session; [] once loaded (possibly empty)
+
+// Rebuilds the in-memory banks above from state.voiceLines — call after any
+// fetch/realtime refresh and after a local add/delete in the admin tab.
+function rebuildVoiceBanks(){
+  const byCategory = { opener:[], closer:[], celebration:[], redeem:[], comeback:[], streak:[] };
+  (state.voiceLines||[]).forEach(v=>{
+    if(byCategory[v.category]) byCategory[v.category].push({file: VOICE_FILES_FOLDER+'/'+v.file, text:v.text});
+  });
+  PIP_VOICE_OPENERS.length = 0; PIP_VOICE_OPENERS.push(...byCategory.opener);
+  PIP_VOICE_CLOSERS.length = 0; PIP_VOICE_CLOSERS.push(...byCategory.closer);
+  Object.keys(PIP_VOICE_CONTEXT).forEach(k=>{ PIP_VOICE_CONTEXT[k].length = 0; PIP_VOICE_CONTEXT[k].push(...byCategory[k]); });
+}
+
+// Lists what's currently in the repo's voices/ folder via GitHub's public,
+// unauthenticated Contents API (the repo is public, so no token is needed —
+// this only powers the admin file-picker, never child-facing playback, so
+// GitHub's ~60-req/hour anonymous rate limit is a non-issue). Cached for the
+// session; pass force:true (the admin tab's refresh button) to re-fetch.
+async function fetchVoiceFileOptions(force){
+  if(voiceFileOptions !== null && !force) return voiceFileOptions;
+  try{
+    const res = await fetch(VOICE_FILES_API_URL);
+    if(!res.ok) return voiceFileOptions || [];
+    const items = await res.json();
+    voiceFileOptions = items
+      .filter(f=>f.type==='file' && /\.(mp3|ogg|wav|m4a)$/i.test(f.name))
+      .map(f=>f.name)
+      .sort();
+  }catch(e){ /* offline or GitHub unreachable — keep whatever we had, or empty */ }
+  return voiceFileOptions || [];
+}
+
+function pickRandom(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+
+function playClipSequence(files, i){
+  i = i || 0;
+  if(i >= files.length) return;
+  const audio = new Audio(files[i]);
+  audio.addEventListener('ended', ()=> setTimeout(()=>playClipSequence(files, i+1), PIP_VOICE_GAP_MS));
+  // Missing/blocked/not-yet-recorded clip — skip ahead rather than stall the sequence.
+  audio.play().catch(()=>playClipSequence(files, i+1));
+}
+
+// Plays a randomly-assembled voice line for `moment` and returns its exact
+// transcript (or null if nothing's recorded for that moment yet) so the
+// caller can show the same words that just got spoken.
+function playPipVoice(moment){
+  const context = PIP_VOICE_CONTEXT[moment];
+  if(!context || !context.length) return null; // nothing recorded for this moment yet
+  const beats = [];
+  if(PIP_VOICE_OPENERS.length && Math.random() < PIP_VOICE_BEAT_CHANCE) beats.push(pickRandom(PIP_VOICE_OPENERS));
+  beats.push(pickRandom(context));
+  if(PIP_VOICE_CLOSERS.length && Math.random() < PIP_VOICE_BEAT_CHANCE) beats.push(pickRandom(PIP_VOICE_CLOSERS));
+  playClipSequence(beats.map(b=>b.file));
+  return beats.map(b=>b.text).join(' ');
+}
+
 /* ============ PIP NOTIFICATIONS ============ */
 function deliverPendingNotifications(){
+  if(!notificationsArmed) return;
   if(!child || !child.notifications || !child.notifications.length) return;
   if(kioskLocked) return;
   const parentOverlay = document.getElementById('parentOverlay');
@@ -2565,18 +2767,24 @@ function showNextNotification(){
     img.src = 'pip-message.png';
     title.textContent = 'A message from Pip';
     body.textContent = n.message;
+    // No voice line here — a generic clip under a parent's own custom text
+    // would feel mismatched, and the brief has Pip's actual words be the
+    // message itself, not narration over it.
   } else if(n.kind==='comeback'){
     img.src = 'pip-comeback.png';
     title.textContent = 'Welcome back!';
-    body.textContent = `Your "${n.label}" pause is over — let's keep going, ${child.name}!`;
+    const spoken = playPipVoice('comeback');
+    body.textContent = (spoken ? spoken+' ' : '') + `Your "${n.label}" pause is over — let's keep going, ${child.name}!`;
   } else {
     img.src = 'pip-celebration.png';
     title.textContent = `${n.emoji||'🎉'} ${n.label} approved!`.trim();
     if(n.currency){
       const cur = n.currency==='points' ? 'pts' : 'min';
-      body.textContent = `+${n.amount} ${cur} — nice work, ${child.name}!`;
+      const spoken = playPipVoice('celebration');
+      body.textContent = (spoken ? spoken+' ' : '') + `+${n.amount} ${cur} — nice work, ${child.name}!`;
     } else {
-      body.textContent = `You got it, ${child.name}! Ask a parent when it's ready.`;
+      const spoken = playPipVoice('redeem');
+      body.textContent = (spoken ? spoken+' ' : '') + `You got it, ${child.name}! Ask a parent when it's ready.`;
     }
   }
   document.getElementById('pipNotifyOverlay').classList.add('show');
@@ -2613,19 +2821,24 @@ async function afterAuth(){
     authUserId = user.id;
     const cloud = await fetchCloudState();
     const savedActiveId = localStorage.getItem(ACTIVE_CHILD_KEY);
-    state = { pin: cloud.pin, activeChildId: savedActiveId, children: cloud.children };
+    state = { pin: cloud.pin, activeChildId: savedActiveId, children: cloud.children, voiceLines: cloud.voiceLines };
     if(!state.activeChildId || !state.children.find(c=>c.id===state.activeChildId)){
       state.activeChildId = state.children[0].id;
     }
     child = state.children.find(c=>c.id===state.activeChildId);
     localStorage.setItem(ACTIVE_CHILD_KEY, child.id);
+    rebuildVoiceBanks();
 
     document.getElementById('loadingScreen').style.display='none';
     connectionOk = true;
     buildPinPad();
     ensureWeek(child);
     render();
-    deliverPendingNotifications();
+    // Land on the lock screen rather than whichever child was last active on
+    // this device — otherwise a parent logging in lands straight in that
+    // child's session and their queued Pip notifications (see
+    // notificationsArmed above).
+    showLockScreen();
     scheduleMidnightRefresh();
     subscribeRealtime();
     startAppIdleWatch();
@@ -2661,7 +2874,10 @@ document.getElementById('loginBtn').addEventListener('click', async ()=>{
 document.querySelectorAll('.nav-btn').forEach(b=>{
   b.addEventListener('click', ()=>{ view=b.dataset.view; render(); });
 });
-document.getElementById('lockBtn').addEventListener('click', ()=>openPin({type:'parent'}));
+document.getElementById('lockBtn').addEventListener('click', ()=>{
+  if(parentSessionActive) openParent();
+  else openPin({type:'parent'});
+});
 document.getElementById('exitProfileBtn').addEventListener('click', ()=>showLockScreen());
 document.getElementById('pinCancel').addEventListener('click', closePin);
 document.getElementById('parentClose').addEventListener('click', closeParent);
@@ -2715,7 +2931,7 @@ let punishmentPickerContext = null; // {type:'new'|'edit', id?}
 let punishmentDraft = {durationUnit:'days'};
 let limitPickerContext = null; // {type:'newPrize'|'edit', id?}
 let limitDraft = {enabled:false, period:'day'};
-let settingsTab = 'profile'; // 'profile' | 'points' | 'manual' | 'data'
+let settingsTab = 'profile'; // 'profile' | 'points' | 'manual' | 'message' | 'voice' | 'data'
 let manualEntryType = null; // null | 'chore' | 'prize'
 
 boot();
