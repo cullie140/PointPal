@@ -658,6 +658,67 @@ async function denyEntry(id, opts){
   try{ await sb.from('entries').update({status:'denied'}).eq('id', id).throwOnError(); }catch(err){ handleSyncError(err); }
 }
 
+// Reverses exactly what an approved entry itself credited/debited — shared
+// by unapproveEntry() and deleteEntryPermanently(). Only claws back the
+// portion still actually sitting in the balance: logMinutesUsed() may
+// already have drained some of a minutes grant (this entry's own, or a
+// fulfilled redeem's grantsMinutes), so only the remainder
+// (grant - minutesUsed) is still attributable to this entry.
+function reverseApprovedEffect(c, e){
+  if(e.kind==='chore' || e.kind==='bonus'){
+    if(e.currency==='points'){
+      c.points = Math.max(0, c.points - e.amount);
+    } else {
+      c.minutes = Math.max(0, c.minutes - (e.amount - (e.minutesUsed||0)));
+    }
+  } else if(e.kind==='redeem'){
+    c.points += e.amount;
+    if(e.fulfilled && e.grantsMinutes>0){
+      c.minutes = Math.max(0, c.minutes - (e.grantsMinutes - (e.minutesUsed||0)));
+    }
+  }
+}
+
+// Settings > Data > "Edit Individual Entries" — sends an approved entry back
+// to pending and reverses its effect on the balance, so a parent can correct
+// a wrongly-approved entry without touching the +/- adjusters by hand.
+async function unapproveEntry(id){
+  if(!requireOnline()) return;
+  const owner = findEntryOwner(id);
+  if(!owner) return;
+  const c = owner.child, e = owner.entry;
+  if(e.status!=='approved') return;
+  if(!confirm(`Unapprove "${e.label}"? This reverses its effect on ${c.name}'s balance and sends it back to pending.`)) return;
+  reverseApprovedEffect(c, e);
+  e.status = 'pending';
+  e.fulfilled = false;
+  e.minutesUsed = 0;
+  renderParentBody(); render();
+  try{
+    await sb.from('entries').update({status:'pending', fulfilled:false, minutes_used:0}).eq('id', id).throwOnError();
+    await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id).throwOnError();
+  }catch(err){ handleSyncError(err); }
+}
+
+// Removes an entry from the ledger entirely, regardless of status — the one
+// exception to "nothing is deleted from entries" (see CLAUDE.md), reserved
+// for a parent correcting an outright mistake. Reverses the balance first if
+// it was approved.
+async function deleteEntryPermanently(id){
+  if(!requireOnline()) return;
+  const owner = findEntryOwner(id);
+  if(!owner) return;
+  const c = owner.child, e = owner.entry;
+  if(!confirm(`Delete "${e.label}" entirely? This can't be undone.`)) return;
+  if(e.status==='approved') reverseApprovedEffect(c, e);
+  c.entries = c.entries.filter(x=>x.id!==id);
+  renderParentBody(); render();
+  try{
+    await sb.from('entries').delete().eq('id', id).throwOnError();
+    if(e.status==='approved') await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id).throwOnError();
+  }catch(err){ handleSyncError(err); }
+}
+
 async function markFulfilled(id){
   if(!requireOnline()) return;
   const owner = findEntryOwner(id);
@@ -1860,11 +1921,66 @@ function manualPrizeFormHTML(){
   `;
 }
 
+const DATA_ENTRIES_FILTERS = [
+  {id:'all', label:'All'},
+  {id:'chore', label:'Activities'},
+  {id:'redeem', label:'Prizes'},
+  {id:'bonus', label:'Bonuses'}
+];
+const DATA_ENTRIES_SHOWN_MAX = 60;
+
 function settingsDataHTML(){
+  if(dataEntriesOpen) return dataEntriesListHTML();
   return `
+    <button class="btn btn-primary" id="openDataEntriesBtn" style="margin-bottom:20px;">Edit Individual Entries</button>
     <div class="settings-label" style="margin-bottom:8px;">Danger Zone</div>
     <div class="sheet-sub" style="margin-bottom:12px;">This erases all of <b>${child.name}</b>'s points, minutes, and history. This can't be undone.</div>
     <button class="btn btn-deny" id="resetAllBtn">Reset ${child.name}'s Data</button>
+  `;
+}
+
+function dataEntriesListHTML(){
+  const all = (child.entries||[]).slice().sort((a,b)=>b.ts-a.ts);
+  const filtered = dataEntriesFilter==='all' ? all : all.filter(e=>e.kind===dataEntriesFilter);
+  const shown = filtered.slice(0, DATA_ENTRIES_SHOWN_MAX);
+  const rows = shown.length
+    ? shown.map(dataEntryRowHTML).join('')
+    : `<div class="empty-state"><div class="e">📭</div>Nothing here.</div>`;
+  return `
+    <button class="icon-btn-sm" id="dataEntriesBackBtn" style="margin-bottom:12px;">‹ Back</button>
+    <div class="sheet-sub" style="margin-bottom:10px;">
+      <b>Unapprove</b> sends an entry back to pending and reverses its effect on ${child.name}'s balance.
+      <b>Delete</b> removes it entirely, also reversing the balance if it was approved. Neither can be undone once confirmed.
+    </div>
+    <div class="tab-row">
+      ${DATA_ENTRIES_FILTERS.map(f=>`<button class="tab-btn ${dataEntriesFilter===f.id?'active':''}" data-entries-filter="${f.id}">${f.label}</button>`).join('')}
+    </div>
+    ${rows}
+    ${filtered.length>shown.length ? `<div class="sheet-sub" style="margin-top:10px;">Showing the most recent ${shown.length} of ${filtered.length} — use History to browse further back.</div>` : ''}
+  `;
+}
+
+function dataEntryRowHTML(e){
+  const cur = e.currency==='points' ? 'pts' : 'min';
+  const sign = e.kind==='redeem' ? '−' : '+';
+  let amtClass='wait', amtText='';
+  if(e.status==='approved'){ amtClass = e.kind==='redeem'?'neg':'pos'; amtText=`${sign}${e.amount} ${cur}`; }
+  else if(e.status==='pending'){ amtClass='wait'; amtText=`${sign}${e.amount} ${cur} · pending`; }
+  else { amtClass='deny'; amtText=`${sign}${e.amount} ${cur} · denied`; }
+  return `
+    <div class="list-edit-item">
+      <div class="item-row-main">
+        <div class="history-emoji">${e.emoji}</div>
+        <div style="flex:1; min-width:0;">
+          <div style="font-weight:700; font-size:14px;">${e.label}</div>
+          <div class="history-meta">${timeAgo(e.ts)} · <span class="history-amount ${amtClass}" style="font-size:12.5px;">${amtText}</span></div>
+        </div>
+      </div>
+      <div class="item-row-meta">
+        ${e.status==='approved' ? `<button class="icon-btn-sm" data-unapprove-entry="${e.id}">Unapprove</button>` : ''}
+        <button class="icon-btn-sm" data-delete-entry="${e.id}">Delete</button>
+      </div>
+    </div>
   `;
 }
 
@@ -2199,7 +2315,7 @@ function wireParentBody(){
 
   document.querySelectorAll('[data-stab]').forEach(b=>{
     b.onclick=()=>{
-      settingsTab = b.dataset.stab; manualEntryType = null; renderParentBody();
+      settingsTab = b.dataset.stab; manualEntryType = null; dataEntriesOpen = false; renderParentBody();
       if(settingsTab==='voice' && voiceFileOptions===null){
         fetchVoiceFileOptions().then(()=>{ if(settingsTab==='voice') renderParentBody(); });
       }
@@ -2312,6 +2428,19 @@ function wireParentBody(){
       }catch(err){ handleSyncError(err); }
     }
   };
+  const openDataEntriesBtn = document.getElementById('openDataEntriesBtn');
+  if(openDataEntriesBtn) openDataEntriesBtn.onclick=()=>{ dataEntriesOpen = true; renderParentBody(); };
+  const dataEntriesBackBtn = document.getElementById('dataEntriesBackBtn');
+  if(dataEntriesBackBtn) dataEntriesBackBtn.onclick=()=>{ dataEntriesOpen = false; renderParentBody(); };
+  document.querySelectorAll('[data-entries-filter]').forEach(b=>{
+    b.onclick=()=>{ dataEntriesFilter = b.dataset.entriesFilter; renderParentBody(); };
+  });
+  document.querySelectorAll('[data-unapprove-entry]').forEach(b=>{
+    b.onclick=()=>unapproveEntry(b.dataset.unapproveEntry);
+  });
+  document.querySelectorAll('[data-delete-entry]').forEach(b=>{
+    b.onclick=()=>deleteEntryPermanently(b.dataset.deleteEntry);
+  });
 }
 
 /* ============ RENDER: main views ============ */
@@ -2976,6 +3105,8 @@ let limitPickerContext = null; // {type:'newPrize'|'edit', id?}
 let limitDraft = {enabled:false, period:'day'};
 let settingsTab = 'profile'; // 'profile' | 'points' | 'manual' | 'message' | 'voice' | 'data'
 let manualEntryType = null; // null | 'chore' | 'prize'
+let dataEntriesOpen = false; // Settings > Data > "Edit Individual Entries" sub-view
+let dataEntriesFilter = 'all'; // 'all' | 'chore' | 'redeem' | 'bonus'
 
 boot();
 
