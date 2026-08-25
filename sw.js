@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pointpal-cache-v80';
+const CACHE_NAME = 'pointpal-cache-v82';
 const ASSETS = [
   './',
   './index.html',
@@ -25,7 +25,8 @@ const ASSETS = [
   './badge-mail.png',
   './badge-exit.png',
   './pip-point-core-spark.png',
-  './sfx-coin-land.wav'
+  './sfx-coin-land.wav',
+  './sfx-screentime-land.wav'
 ];
 
 self.addEventListener('install', (event) => {

@@ -2825,66 +2825,110 @@ function burstConfetti(){
   }
 }
 
-const COIN_FLY_MAX = 10;      // cap the shower regardless of amount — a +120 bonus shouldn't mean a 120-coin wait
-const COIN_FLY_STAGGER_MS = 70;
-const COIN_FLY_DURATION_MS = 750;
-const COIN_FLY_LAUNCH_HOLD_MS = 150; // dismissNotification() holds the modal open this long past the last coin's launch
+const REWARD_FLY_MAX = 10;      // cap the shower regardless of amount — a +120 bonus shouldn't mean a 120-piece wait
+const REWARD_FLY_STAGGER_MS = 70;
+const REWARD_FLY_DURATION_MS = 750;
+const REWARD_FLY_LAUNCH_HOLD_MS = 150; // dismissNotification() holds the modal open this long past the last piece's launch
 
-// Animates up to COIN_FLY_MAX coins (pip-point-core-spark.png) in a
-// staggered burst from Pip's own position in the just-dismissed notification
-// into the Points meter's icon, each spinning and shrinking as it flies,
-// with a landing clink per coin and a single confirming pulse on the meter
-// card timed to the last one — not one pulse per coin, which would just
-// look jittery stacked up like that. originRect is #pipNotifyImg's
-// getBoundingClientRect(), captured by the caller before the notification
-// modal starts closing/swapping; falls back to low-center-screen if that
-// wasn't available for some reason.
-function flyCoinsToMeter(amount, originRect){
-  const meterIcon = document.querySelector('#pointsMeter .point-core-icon');
-  const meterCard = document.getElementById('pointsMeter');
+// Shared by flyCoinsToMeter/flySparksToMeter: computes origin/destination
+// screen coordinates and runs the staggered per-piece launch loop, calling
+// buildPiece(sx, sy) to create+animate each one (coins vs sparks differ only
+// in what that element looks like and how it moves). originRect is
+// #pipNotifyImg's getBoundingClientRect(), captured by the caller before the
+// notification modal starts closing/swapping; falls back to low-center-
+// screen if that wasn't available for some reason.
+function flyRewardPieces(amount, originRect, destEl, buildPiece){
   const layer = document.getElementById('floaters');
-  if(!meterIcon || !meterCard || !layer) return;
-
-  const destRect = meterIcon.getBoundingClientRect();
+  if(!destEl || !layer) return;
+  const destRect = destEl.getBoundingClientRect();
   const destX = destRect.left + destRect.width/2;
   const destY = destRect.top + destRect.height/2;
   const originX = originRect ? originRect.left + originRect.width/2 : window.innerWidth/2;
   const originY = originRect ? originRect.top + originRect.height/2 : window.innerHeight*0.85;
-  const count = Math.min(amount, COIN_FLY_MAX);
+  const count = Math.min(amount, REWARD_FLY_MAX);
 
   for(let i=0;i<count;i++){
     setTimeout(()=>{
       const sx = originX + (Math.random()*30-15);
       const sy = originY + (Math.random()*20-10);
-      const coin = document.createElement('img');
-      coin.src = 'pip-point-core-spark.png';
-      coin.alt = '';
-      coin.className = 'coin-fly';
-      coin.style.left = sx+'px';
-      coin.style.top = sy+'px';
-      layer.appendChild(coin);
-
-      const dx = destX - sx, dy = destY - sy;
-      const midY = dy*0.4 - 60 - Math.random()*30; // a little rise before the fall, not a straight line
-      const spins = 720 + Math.floor(Math.random()*360);
-
-      const anim = coin.animate([
-        { transform:'translate(0px,0px) rotate(0deg) scale(1)' },
-        { transform:`translate(${dx*0.5}px, ${midY}px) rotate(${spins*0.6}deg) scale(0.75)`, offset:0.45 },
-        { transform:`translate(${dx}px, ${dy}px) rotate(${spins}deg) scale(0.3)` }
-      ], { duration: COIN_FLY_DURATION_MS, easing:'ease-in', fill:'forwards' });
-
-      anim.onfinish = ()=>{
-        coin.remove();
-        playCoinLandSfx();
-        if(i===count-1) pulseMeterCard(meterCard);
-      };
-    }, i*COIN_FLY_STAGGER_MS);
+      buildPiece(sx, sy, destX-sx, destY-sy, i===count-1);
+    }, i*REWARD_FLY_STAGGER_MS);
   }
+}
+
+// Coins spinning (Z-axis rotate — the sprite's flat, so a real cartwheel
+// reads as "spinning" with no second back-face image needed) and shrinking
+// into the Points meter's icon, with a landing clink per coin and a single
+// confirming pulse on the meter card timed to the last one.
+function flyCoinsToMeter(amount, originRect){
+  const meterIcon = document.querySelector('#pointsMeter .point-core-icon');
+  const meterCard = document.getElementById('pointsMeter');
+  if(!meterIcon || !meterCard) return;
+  flyRewardPieces(amount, originRect, meterIcon, (sx, sy, dx, dy, isLast)=>{
+    const layer = document.getElementById('floaters');
+    const coin = document.createElement('img');
+    coin.src = 'pip-point-core-spark.png';
+    coin.alt = '';
+    coin.className = 'coin-fly';
+    coin.style.left = sx+'px';
+    coin.style.top = sy+'px';
+    layer.appendChild(coin);
+
+    const midY = dy*0.4 - 60 - Math.random()*30; // a little rise before the fall, not a straight line
+    const spins = 720 + Math.floor(Math.random()*360);
+    const anim = coin.animate([
+      { transform:'translate(0px,0px) rotate(0deg) scale(1)' },
+      { transform:`translate(${dx*0.5}px, ${midY}px) rotate(${spins*0.6}deg) scale(0.75)`, offset:0.45 },
+      { transform:`translate(${dx}px, ${dy}px) rotate(${spins}deg) scale(0.3)` }
+    ], { duration: REWARD_FLY_DURATION_MS, easing:'ease-in', fill:'forwards' });
+
+    anim.onfinish = ()=>{
+      coin.remove();
+      playCoinLandSfx();
+      if(isLast) pulseMeterCard(meterCard);
+    };
+  });
+}
+
+// Small CSS-drawn stars (no dedicated minutes icon/art exists) streaking
+// into the Screen Time meter — no spin, just a fast, fairly direct flight
+// with a soft fade at the very end, reading as a trail of sparks rather
+// than one spinning object.
+function flySparksToMeter(amount, originRect){
+  const meterVal = document.getElementById('minutesVal');
+  const meterCard = document.getElementById('minutesMeter');
+  if(!meterVal || !meterCard) return;
+  flyRewardPieces(amount, originRect, meterVal, (sx, sy, dx, dy, isLast)=>{
+    const layer = document.getElementById('floaters');
+    const spark = document.createElement('div');
+    spark.className = 'spark-fly';
+    spark.textContent = '✨';
+    spark.style.left = sx+'px';
+    spark.style.top = sy+'px';
+    layer.appendChild(spark);
+
+    const midY = dy*0.5 - 30 - Math.random()*20; // flatter, quicker arc than the coins' toss
+    const anim = spark.animate([
+      { transform:'translate(0px,0px) scale(1)', opacity:1 },
+      { transform:`translate(${dx*0.6}px, ${midY}px) scale(0.8)`, opacity:1, offset:0.6 },
+      { transform:`translate(${dx}px, ${dy}px) scale(0.25)`, opacity:0.2 }
+    ], { duration: REWARD_FLY_DURATION_MS*0.8, easing:'ease-in', fill:'forwards' });
+
+    anim.onfinish = ()=>{
+      spark.remove();
+      playScreenTimeLandSfx();
+      if(isLast) pulseMeterCard(meterCard);
+    };
+  });
 }
 
 function playCoinLandSfx(){
   const a = new Audio('sfx-coin-land.wav');
+  a.play().catch(()=>{});
+}
+
+function playScreenTimeLandSfx(){
+  const a = new Audio('sfx-screentime-land.wav');
   a.play().catch(()=>{});
 }
 
@@ -3072,19 +3116,22 @@ async function dismissNotification(){
   if(!child.notifications.length) return;
   const n = child.notifications.shift();
   // Captured before the modal closes/swaps to the next notification, so the
-  // coins launch from wherever Pip was actually standing for *this* one.
+  // reward pieces launch from wherever Pip was actually standing for *this*
+  // one.
   const pipImg = document.getElementById('pipNotifyImg');
   const originRect = pipImg ? pipImg.getBoundingClientRect() : null;
-  const shouldFly = (n.kind==='celebration' || n.kind==='streak') && n.currency==='points' && n.amount>0;
-  if(shouldFly){
-    flyCoinsToMeter(n.amount, originRect);
-    // Hold the modal open until every coin has visibly launched off Pip —
-    // closing it instantly made the coins look like they spawned from
-    // nowhere, since #floaters sits above everything regardless of the
-    // modal's state. Only waits for the *launches*, not the full flights —
-    // the coins keep animating toward the meter after the modal closes.
-    const count = Math.min(n.amount, COIN_FLY_MAX);
-    await new Promise(r=>setTimeout(r, (count-1)*COIN_FLY_STAGGER_MS + COIN_FLY_LAUNCH_HOLD_MS));
+  const isReward = (n.kind==='celebration' || n.kind==='streak') && n.amount>0
+    && (n.currency==='points' || n.currency==='minutes');
+  if(isReward){
+    if(n.currency==='points') flyCoinsToMeter(n.amount, originRect);
+    else flySparksToMeter(n.amount, originRect);
+    // Hold the modal open until every piece has visibly launched off Pip —
+    // closing it instantly made them look like they spawned from nowhere,
+    // since #floaters sits above everything regardless of the modal's
+    // state. Only waits for the *launches*, not the full flights — pieces
+    // keep animating toward the meter after the modal closes.
+    const count = Math.min(n.amount, REWARD_FLY_MAX);
+    await new Promise(r=>setTimeout(r, (count-1)*REWARD_FLY_STAGGER_MS + REWARD_FLY_LAUNCH_HOLD_MS));
   }
   if(child.notifications.length){ showNextNotification(); }
   else { document.getElementById('pipNotifyOverlay').classList.remove('show'); }
