@@ -2828,14 +2828,18 @@ function burstConfetti(){
 const COIN_FLY_MAX = 10;      // cap the shower regardless of amount — a +120 bonus shouldn't mean a 120-coin wait
 const COIN_FLY_STAGGER_MS = 70;
 const COIN_FLY_DURATION_MS = 750;
+const COIN_FLY_LAUNCH_HOLD_MS = 150; // dismissNotification() holds the modal open this long past the last coin's launch
 
 // Animates up to COIN_FLY_MAX coins (pip-point-core-spark.png) in a
-// staggered burst from roughly the celebration modal's position into the
-// Points meter's own icon, each spinning and shrinking as it flies, with a
-// landing clink per coin and a single confirming pulse on the meter card
-// timed to the last one — not one pulse per coin, which would just look
-// jittery stacked up like that.
-function flyCoinsToMeter(amount){
+// staggered burst from Pip's own position in the just-dismissed notification
+// into the Points meter's icon, each spinning and shrinking as it flies,
+// with a landing clink per coin and a single confirming pulse on the meter
+// card timed to the last one — not one pulse per coin, which would just
+// look jittery stacked up like that. originRect is #pipNotifyImg's
+// getBoundingClientRect(), captured by the caller before the notification
+// modal starts closing/swapping; falls back to low-center-screen if that
+// wasn't available for some reason.
+function flyCoinsToMeter(amount, originRect){
   const meterIcon = document.querySelector('#pointsMeter .point-core-icon');
   const meterCard = document.getElementById('pointsMeter');
   const layer = document.getElementById('floaters');
@@ -2844,8 +2848,8 @@ function flyCoinsToMeter(amount){
   const destRect = meterIcon.getBoundingClientRect();
   const destX = destRect.left + destRect.width/2;
   const destY = destRect.top + destRect.height/2;
-  const originX = window.innerWidth/2;
-  const originY = window.innerHeight*0.32;
+  const originX = originRect ? originRect.left + originRect.width/2 : window.innerWidth/2;
+  const originY = originRect ? originRect.top + originRect.height/2 : window.innerHeight*0.85;
   const count = Math.min(amount, COIN_FLY_MAX);
 
   for(let i=0;i<count;i++){
@@ -2931,14 +2935,6 @@ let voiceFileOptions = null; // null = not fetched yet this session; [] once loa
 // the queue instead, which by construction only one notification ever is.
 let pipNameAnnounced = false;
 let pipOpenerPlayed = false;
-// Accumulated across a batch (see above) by showNextNotification(), then
-// spent once by dismissNotification() the moment the queue actually drains
-// to empty — so a run of several notifications produces one coin shower
-// sized to the batch's total, not one shower per notification (which,
-// since the overlay just re-covers the meter with the next notification
-// immediately, would fire mostly invisibly anyway).
-let pipBatchPointsEarned = 0;
-let pipBatchMinutesEarned = 0; // reserved for a future minutes spark-trail
 
 // Rebuilds the in-memory banks above from state.voiceLines — call after any
 // fetch/realtime refresh and after a local add/delete in the admin tab.
@@ -3023,7 +3019,6 @@ function deliverPendingNotifications(){
   if(parentOverlay && parentOverlay.classList.contains('show')) return;
   if(document.getElementById('pipNotifyOverlay').classList.contains('show')) return;
   pipNameAnnounced = false; pipOpenerPlayed = false; // a fresh batch is starting
-  pipBatchPointsEarned = 0; pipBatchMinutesEarned = 0;
   showNextNotification();
 }
 
@@ -3057,7 +3052,6 @@ function showNextNotification(){
     const cur = n.currency==='points' ? 'pts' : 'min';
     const spoken = playPipVoice('streak');
     body.textContent = (spoken ? spoken+' ' : '') + `+${n.amount} ${cur} — you're on fire, ${child.name}!`;
-    if(n.currency==='points') pipBatchPointsEarned += n.amount; else pipBatchMinutesEarned += n.amount;
   } else {
     img.src = 'pip-celebration.png';
     title.textContent = `${n.emoji||'🎉'} ${n.label} approved!`.trim();
@@ -3065,7 +3059,6 @@ function showNextNotification(){
       const cur = n.currency==='points' ? 'pts' : 'min';
       const spoken = playPipVoice(n.currency==='points' ? 'points' : 'minutes');
       body.textContent = (spoken ? spoken+' ' : '') + `+${n.amount} ${cur} — nice work, ${child.name}!`;
-      if(n.currency==='points') pipBatchPointsEarned += n.amount; else pipBatchMinutesEarned += n.amount;
     } else {
       const spoken = playPipVoice('redeem');
       body.textContent = (spoken ? spoken+' ' : '') + `You got it, ${child.name}! Ask a parent when it's ready.`;
@@ -3078,12 +3071,23 @@ function showNextNotification(){
 async function dismissNotification(){
   if(!child.notifications.length) return;
   const n = child.notifications.shift();
-  if(child.notifications.length){ showNextNotification(); }
-  else {
-    document.getElementById('pipNotifyOverlay').classList.remove('show');
-    if(pipBatchPointsEarned>0) flyCoinsToMeter(pipBatchPointsEarned);
-    pipBatchPointsEarned = 0; pipBatchMinutesEarned = 0; // minutes spark-trail is a future piece
+  // Captured before the modal closes/swaps to the next notification, so the
+  // coins launch from wherever Pip was actually standing for *this* one.
+  const pipImg = document.getElementById('pipNotifyImg');
+  const originRect = pipImg ? pipImg.getBoundingClientRect() : null;
+  const shouldFly = (n.kind==='celebration' || n.kind==='streak') && n.currency==='points' && n.amount>0;
+  if(shouldFly){
+    flyCoinsToMeter(n.amount, originRect);
+    // Hold the modal open until every coin has visibly launched off Pip —
+    // closing it instantly made the coins look like they spawned from
+    // nowhere, since #floaters sits above everything regardless of the
+    // modal's state. Only waits for the *launches*, not the full flights —
+    // the coins keep animating toward the meter after the modal closes.
+    const count = Math.min(n.amount, COIN_FLY_MAX);
+    await new Promise(r=>setTimeout(r, (count-1)*COIN_FLY_STAGGER_MS + COIN_FLY_LAUNCH_HOLD_MS));
   }
+  if(child.notifications.length){ showNextNotification(); }
+  else { document.getElementById('pipNotifyOverlay').classList.remove('show'); }
   try{ await sb.from('notifications').delete().eq('id', n.id).throwOnError(); }catch(err){ handleSyncError(err); }
 }
 
