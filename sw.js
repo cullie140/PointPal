@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pointpal-cache-v77';
+const CACHE_NAME = 'pointpal-cache-v78';
 const ASSETS = [
   './',
   './index.html',
@@ -23,7 +23,9 @@ const ASSETS = [
   './pip-wave.png',
   './pip-flying.png',
   './badge-mail.png',
-  './badge-exit.png'
+  './badge-exit.png',
+  './pip-point-core-spark.png',
+  './sfx-coin-land.wav'
 ];
 
 self.addEventListener('install', (event) => {

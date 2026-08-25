@@ -2825,6 +2825,73 @@ function burstConfetti(){
   }
 }
 
+const COIN_FLY_MAX = 10;      // cap the shower regardless of amount — a +120 bonus shouldn't mean a 120-coin wait
+const COIN_FLY_STAGGER_MS = 70;
+const COIN_FLY_DURATION_MS = 750;
+
+// Animates up to COIN_FLY_MAX coins (pip-point-core-spark.png) in a
+// staggered burst from roughly the celebration modal's position into the
+// Points meter's own icon, each spinning and shrinking as it flies, with a
+// landing clink per coin and a single confirming pulse on the meter card
+// timed to the last one — not one pulse per coin, which would just look
+// jittery stacked up like that.
+function flyCoinsToMeter(amount){
+  const meterIcon = document.querySelector('#pointsMeter .point-core-icon');
+  const meterCard = document.getElementById('pointsMeter');
+  const layer = document.getElementById('floaters');
+  if(!meterIcon || !meterCard || !layer) return;
+
+  const destRect = meterIcon.getBoundingClientRect();
+  const destX = destRect.left + destRect.width/2;
+  const destY = destRect.top + destRect.height/2;
+  const originX = window.innerWidth/2;
+  const originY = window.innerHeight*0.32;
+  const count = Math.min(amount, COIN_FLY_MAX);
+
+  for(let i=0;i<count;i++){
+    setTimeout(()=>{
+      const sx = originX + (Math.random()*30-15);
+      const sy = originY + (Math.random()*20-10);
+      const coin = document.createElement('img');
+      coin.src = 'pip-point-core-spark.png';
+      coin.alt = '';
+      coin.className = 'coin-fly';
+      coin.style.left = sx+'px';
+      coin.style.top = sy+'px';
+      layer.appendChild(coin);
+
+      const dx = destX - sx, dy = destY - sy;
+      const midY = dy*0.4 - 60 - Math.random()*30; // a little rise before the fall, not a straight line
+      const spins = 720 + Math.floor(Math.random()*360);
+
+      const anim = coin.animate([
+        { transform:'translate(0px,0px) rotate(0deg) scale(1)' },
+        { transform:`translate(${dx*0.5}px, ${midY}px) rotate(${spins*0.6}deg) scale(0.75)`, offset:0.45 },
+        { transform:`translate(${dx}px, ${dy}px) rotate(${spins}deg) scale(0.3)` }
+      ], { duration: COIN_FLY_DURATION_MS, easing:'ease-in', fill:'forwards' });
+
+      anim.onfinish = ()=>{
+        coin.remove();
+        playCoinLandSfx();
+        if(i===count-1) pulseMeterCard(meterCard);
+      };
+    }, i*COIN_FLY_STAGGER_MS);
+  }
+}
+
+function playCoinLandSfx(){
+  const a = new Audio('sfx-coin-land.wav');
+  a.play().catch(()=>{});
+}
+
+function pulseMeterCard(el){
+  el.animate([
+    { transform:'scale(1)' },
+    { transform:'scale(1.08)' },
+    { transform:'scale(1)' }
+  ], { duration:220, easing:'ease-out' });
+}
+
 /* ============ PIP VOICE LINES ============ */
 // Generic interjection banks, reused across every moment — mixed with a
 // short moment-specific line so full sentences aren't pre-recorded, and
@@ -2864,6 +2931,14 @@ let voiceFileOptions = null; // null = not fetched yet this session; [] once loa
 // the queue instead, which by construction only one notification ever is.
 let pipNameAnnounced = false;
 let pipOpenerPlayed = false;
+// Accumulated across a batch (see above) by showNextNotification(), then
+// spent once by dismissNotification() the moment the queue actually drains
+// to empty — so a run of several notifications produces one coin shower
+// sized to the batch's total, not one shower per notification (which,
+// since the overlay just re-covers the meter with the next notification
+// immediately, would fire mostly invisibly anyway).
+let pipBatchPointsEarned = 0;
+let pipBatchMinutesEarned = 0; // reserved for a future minutes spark-trail
 
 // Rebuilds the in-memory banks above from state.voiceLines — call after any
 // fetch/realtime refresh and after a local add/delete in the admin tab.
@@ -2948,6 +3023,7 @@ function deliverPendingNotifications(){
   if(parentOverlay && parentOverlay.classList.contains('show')) return;
   if(document.getElementById('pipNotifyOverlay').classList.contains('show')) return;
   pipNameAnnounced = false; pipOpenerPlayed = false; // a fresh batch is starting
+  pipBatchPointsEarned = 0; pipBatchMinutesEarned = 0;
   showNextNotification();
 }
 
@@ -2981,6 +3057,7 @@ function showNextNotification(){
     const cur = n.currency==='points' ? 'pts' : 'min';
     const spoken = playPipVoice('streak');
     body.textContent = (spoken ? spoken+' ' : '') + `+${n.amount} ${cur} — you're on fire, ${child.name}!`;
+    if(n.currency==='points') pipBatchPointsEarned += n.amount; else pipBatchMinutesEarned += n.amount;
   } else {
     img.src = 'pip-celebration.png';
     title.textContent = `${n.emoji||'🎉'} ${n.label} approved!`.trim();
@@ -2988,6 +3065,7 @@ function showNextNotification(){
       const cur = n.currency==='points' ? 'pts' : 'min';
       const spoken = playPipVoice(n.currency==='points' ? 'points' : 'minutes');
       body.textContent = (spoken ? spoken+' ' : '') + `+${n.amount} ${cur} — nice work, ${child.name}!`;
+      if(n.currency==='points') pipBatchPointsEarned += n.amount; else pipBatchMinutesEarned += n.amount;
     } else {
       const spoken = playPipVoice('redeem');
       body.textContent = (spoken ? spoken+' ' : '') + `You got it, ${child.name}! Ask a parent when it's ready.`;
@@ -3001,7 +3079,11 @@ async function dismissNotification(){
   if(!child.notifications.length) return;
   const n = child.notifications.shift();
   if(child.notifications.length){ showNextNotification(); }
-  else { document.getElementById('pipNotifyOverlay').classList.remove('show'); }
+  else {
+    document.getElementById('pipNotifyOverlay').classList.remove('show');
+    if(pipBatchPointsEarned>0) flyCoinsToMeter(pipBatchPointsEarned);
+    pipBatchPointsEarned = 0; pipBatchMinutesEarned = 0; // minutes spark-trail is a future piece
+  }
   try{ await sb.from('notifications').delete().eq('id', n.id).throwOnError(); }catch(err){ handleSyncError(err); }
 }
 
