@@ -277,11 +277,30 @@ function startPeriodicResync(){
   setInterval(()=>{ if(state) scheduleRefetch(); }, PERIODIC_RESYNC_MS);
 }
 
+let offlineBannerShowTimer = null;
+// Debounced on purpose: a brief realtime reconnect blip (far more common on
+// a phone or a long-idle kiosk tablet than on a stable desktop connection —
+// this is called every time connectionOk flips, including the quick false→
+// true cycles a reconnect produces) shouldn't visibly flash the screen.
+// Hiding still happens immediately on reconnect; only *showing* is delayed,
+// so a real, sustained outage still surfaces quickly.
 function updateOfflineBanner(){
   const banner = document.getElementById('offlineBanner');
-  if(banner) banner.classList.toggle('show', !connectionOk);
   const mc = document.getElementById('mainContent');
-  if(mc) mc.classList.toggle('offline-locked', !connectionOk);
+  if(connectionOk){
+    clearTimeout(offlineBannerShowTimer);
+    offlineBannerShowTimer = null;
+    if(banner) banner.classList.remove('show');
+    if(mc) mc.classList.remove('offline-locked');
+  } else if(!offlineBannerShowTimer && !(banner && banner.classList.contains('show'))){
+    offlineBannerShowTimer = setTimeout(()=>{
+      offlineBannerShowTimer = null;
+      if(!connectionOk){
+        if(banner) banner.classList.add('show');
+        if(mc) mc.classList.add('offline-locked');
+      }
+    }, 1500);
+  }
 }
 window.addEventListener('online', ()=>{ connectionOk = true; updateOfflineBanner(); if(state) scheduleRefetch(); });
 window.addEventListener('offline', ()=>{ connectionOk = false; updateOfflineBanner(); });
