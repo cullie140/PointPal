@@ -1022,7 +1022,7 @@ function renderLockScreen(){
       ${(c.notifications||[]).length>0 ? '<img class="lock-mail-badge" src="badge-mail.png" alt="">' : ''}
       <div class="lock-tile-avatar">${c.avatar}</div>
       <div class="lock-tile-name">${c.name}</div>
-      <div class="lock-tile-stats"><img class="lock-tile-stat-icon" src="pip-point-core.png" alt="">${c.points} <span>·</span> ${c.minutes} min</div>
+      <div class="lock-tile-stats"><img class="lock-tile-stat-icon" src="pip-point-core.png" alt="">${visiblePoints(c)} <span>·</span> ${visibleMinutes(c)} min</div>
     </button>`).join('') + `
     <button class="lock-tile lock-tile-parent" data-lock-parent="1" style="animation-delay:${state.children.length*90}ms">
       <div class="lock-tile-avatar">🔐</div>
@@ -2449,8 +2449,8 @@ function render(){
   ensureWeek(child);
   document.getElementById('greetingName').textContent = `Hey, ${child.avatar} ${child.name}!`;
   document.getElementById('dateLine').textContent = new Date().toLocaleDateString(undefined,{weekday:'long', month:'short', day:'numeric'});
-  document.getElementById('pointsVal').textContent = child.points;
-  document.getElementById('minutesVal').textContent = child.minutes;
+  document.getElementById('pointsVal').textContent = visiblePoints(child);
+  document.getElementById('minutesVal').textContent = visibleMinutes(child);
 
   const pend = pendingEntries().length;
   const badge = document.getElementById('pendingBadge');
@@ -2494,8 +2494,9 @@ function renderChildSwitcher(){
 function savingsGoalHTML(){
   const goal = child.prizes.find(p=>p.id===child.goalPrizeId);
   if(!goal) return '';
-  const pct = Math.max(4, Math.min(100, Math.round(child.points/goal.cost*100)));
-  const met = child.points >= goal.cost;
+  const shownPoints = visiblePoints(child); // stays in step with the meter above — see visiblePoints()
+  const pct = Math.max(4, Math.min(100, Math.round(shownPoints/goal.cost*100)));
+  const met = shownPoints >= goal.cost;
   return `
     <div class="section-title">Savings Goal</div>
     <div class="goal-card">
@@ -2503,7 +2504,7 @@ function savingsGoalHTML(){
         <img class="goal-pip" src="pip-goal.png" alt="Pip">
         <div class="goal-info">
           <div class="goal-title">${goal.label}</div>
-          <div class="goal-sub">${child.points}/${goal.cost} pts${met?' · Ready! 🎉':''}</div>
+          <div class="goal-sub">${shownPoints}/${goal.cost} pts${met?' · Ready! 🎉':''}</div>
         </div>
       </div>
       <div class="goal-track"><div class="goal-fill" style="width:${pct}%"></div></div>
@@ -2594,7 +2595,7 @@ function prizesHTML(){
   const banner = blocked ? `<div class="punishment-notice">🚫 Prize redemption is paused right now</div>` : '';
   const cards = child.prizes.map(p=>{
     const pending = child.entries.some(e=>e.kind==='redeem' && e.refId===p.id && e.status==='pending');
-    const affordable = child.points >= p.cost;
+    const affordable = visiblePoints(child) >= p.cost; // matches what's on-screen, not the real balance mid-reveal
     const isBlockedNow = blocked && !pending;
     const limitReached = !pending && isPrizeLimitReached(child, p);
     const limitText = p.limitMax ? ` · ${redeemCountInPeriod(child, p.id, p.limitPeriod||'day')}/${p.limitMax} per ${p.limitPeriod==='week'?'wk':'day'}` : '';
@@ -2830,6 +2831,28 @@ const REWARD_FLY_STAGGER_MS = 70;
 const REWARD_FLY_DURATION_MS = 750;
 const REWARD_FLY_LAUNCH_HOLD_MS = 150; // dismissNotification() holds the modal open this long past the last piece's launch
 
+// Reward amounts already credited to a child's real balance but not yet
+// visually "landed" via their coin/spark animation — subtracted from the
+// meter's displayed number (visiblePoints/visibleMinutes below) so a kid
+// sees the total climb exactly when the animation lands, not silently
+// beforehand when the approval synced in or the notification was merely
+// dismissed. Covers the brief tap-to-landing window specifically; before
+// that, the same reward sitting undismissed in child.notifications already
+// holds the number back on its own.
+let inFlightReveals = []; // {id, childId, currency, amount}
+
+function pendingRevealAmount(c, currency){
+  const queued = (c.notifications||[]).reduce((sum, n)=>{
+    const isReward = (n.kind==='celebration' || n.kind==='streak') && n.amount>0 && n.currency===currency;
+    return isReward ? sum + n.amount : sum;
+  }, 0);
+  const inFlight = inFlightReveals.reduce((sum, r)=>
+    (r.childId===c.id && r.currency===currency) ? sum + r.amount : sum, 0);
+  return queued + inFlight;
+}
+function visiblePoints(c){ return Math.max(0, c.points - pendingRevealAmount(c, 'points')); }
+function visibleMinutes(c){ return Math.max(0, c.minutes - pendingRevealAmount(c, 'minutes')); }
+
 // Shared by flyCoinsToMeter/flySparksToMeter: computes origin/destination
 // screen coordinates and runs the staggered per-piece launch loop, calling
 // buildPiece(sx, sy) to create+animate each one (coins vs sparks differ only
@@ -2856,11 +2879,21 @@ function flyRewardPieces(amount, originRect, destEl, buildPiece){
   }
 }
 
+// Called once, on the last piece's landing, for both coins and sparks — the
+// moment the reward actually becomes visible, so this is also when it stops
+// counting as "in flight" and the meter is free to show the real total.
+function resolveInFlightReveal(id){
+  inFlightReveals = inFlightReveals.filter(r=>r.id!==id);
+  render();
+}
+
 // Coins spinning (Z-axis rotate — the sprite's flat, so a real cartwheel
 // reads as "spinning" with no second back-face image needed) and shrinking
 // into the Points meter's icon, with a landing clink per coin and a single
-// confirming pulse on the meter card timed to the last one.
-function flyCoinsToMeter(amount, originRect){
+// confirming pulse on the meter card timed to the last one. `id` is the
+// source notification's id, used only to resolve its inFlightReveals entry
+// once the last coin lands.
+function flyCoinsToMeter(id, amount, originRect){
   const meterIcon = document.querySelector('#pointsMeter .point-core-icon');
   const meterCard = document.getElementById('pointsMeter');
   if(!meterIcon || !meterCard) return;
@@ -2885,7 +2918,7 @@ function flyCoinsToMeter(amount, originRect){
     anim.onfinish = ()=>{
       coin.remove();
       playCoinLandSfx();
-      if(isLast) pulseMeterCard(meterCard);
+      if(isLast){ pulseMeterCard(meterCard); resolveInFlightReveal(id); }
     };
   });
 }
@@ -2894,7 +2927,7 @@ function flyCoinsToMeter(amount, originRect){
 // into the Screen Time meter — no spin, just a fast, fairly direct flight
 // with a soft fade at the very end, reading as a trail of sparks rather
 // than one spinning object.
-function flySparksToMeter(amount, originRect){
+function flySparksToMeter(id, amount, originRect){
   const meterVal = document.getElementById('minutesVal');
   const meterCard = document.getElementById('minutesMeter');
   if(!meterVal || !meterCard) return;
@@ -2917,7 +2950,7 @@ function flySparksToMeter(amount, originRect){
     anim.onfinish = ()=>{
       spark.remove();
       playScreenTimeLandSfx();
-      if(isLast) pulseMeterCard(meterCard);
+      if(isLast){ pulseMeterCard(meterCard); resolveInFlightReveal(id); }
     };
   });
 }
@@ -3123,8 +3156,12 @@ async function dismissNotification(){
   const isReward = (n.kind==='celebration' || n.kind==='streak') && n.amount>0
     && (n.currency==='points' || n.currency==='minutes');
   if(isReward){
-    if(n.currency==='points') flyCoinsToMeter(n.amount, originRect);
-    else flySparksToMeter(n.amount, originRect);
+    // Keeps the meter holding this amount back (see visiblePoints/
+    // visibleMinutes) through the tap-to-landing window, now that it's no
+    // longer sitting in child.notifications to do that job on its own.
+    inFlightReveals.push({id:n.id, childId:child.id, currency:n.currency, amount:n.amount});
+    if(n.currency==='points') flyCoinsToMeter(n.id, n.amount, originRect);
+    else flySparksToMeter(n.id, n.amount, originRect);
     // Hold the modal open until every piece has visibly launched off Pip —
     // closing it instantly made them look like they spawned from nowhere,
     // since #floaters sits above everything regardless of the modal's
