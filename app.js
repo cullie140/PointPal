@@ -220,6 +220,16 @@ function scheduleRefetch(){
   }, 300);
 }
 
+let realtimeReconnectTimer = null;
+function scheduleRealtimeReconnect(){
+  // Mobile browsers (unlike the always-on kiosk tablets) suspend a
+  // backgrounded tab's network connections, which can silently kill this
+  // channel — without this, the app just sits "offline" forever once that
+  // happens, even after connectivity is genuinely fine again.
+  clearTimeout(realtimeReconnectTimer);
+  realtimeReconnectTimer = setTimeout(()=>{ if(state) subscribeRealtime(); }, 4000);
+}
+
 function subscribeRealtime(){
   if(realtimeChannel) sb.removeChannel(realtimeChannel);
   const filter = `user_id=eq.${authUserId}`;
@@ -233,9 +243,30 @@ function subscribeRealtime(){
     .on('postgres_changes', {event:'*', schema:'public', table:'notifications', filter}, scheduleRefetch)
     .on('postgres_changes', {event:'*', schema:'public', table:'pip_voice_lines', filter}, scheduleRefetch)
     .subscribe((status)=>{
-      if(status==='SUBSCRIBED'){ connectionOk = true; updateOfflineBanner(); }
-      else if(status==='CHANNEL_ERROR' || status==='TIMED_OUT' || status==='CLOSED'){ connectionOk = false; updateOfflineBanner(); }
+      if(status==='SUBSCRIBED'){
+        connectionOk = true; updateOfflineBanner();
+        // A fresh subscription only reports changes going forward from now —
+        // anything that happened while the old channel was dead needs an
+        // explicit catch-up fetch, not just "wait for the next change".
+        scheduleRefetch();
+      } else if(status==='CHANNEL_ERROR' || status==='TIMED_OUT' || status==='CLOSED'){
+        connectionOk = false; updateOfflineBanner();
+        scheduleRealtimeReconnect();
+      }
     });
+}
+
+// Belt-and-suspenders fallback for a device that stays on one page for a
+// very long time (the wall-mounted kiosks, especially — mostly idle on the
+// lock screen for hours) — a long-idle WebSocket can go "zombie" (some
+// routers/NATs silently drop it without a proper close), so the client
+// still believes it's subscribed and subscribeRealtime()'s own error/retry
+// logic never fires, since no error is ever reported. This doesn't try to
+// detect that condition — it just doesn't depend on it: a plain refetch on
+// a fixed timer, independent of whatever the realtime channel claims.
+const PERIODIC_RESYNC_MS = 30000;
+function startPeriodicResync(){
+  setInterval(()=>{ if(state) scheduleRefetch(); }, PERIODIC_RESYNC_MS);
 }
 
 function updateOfflineBanner(){
@@ -246,6 +277,17 @@ function updateOfflineBanner(){
 }
 window.addEventListener('online', ()=>{ connectionOk = true; updateOfflineBanner(); if(state) scheduleRefetch(); });
 window.addEventListener('offline', ()=>{ connectionOk = false; updateOfflineBanner(); });
+// 'online'/'offline' only fire on actual network-interface changes (wifi
+// toggling), not when a backgrounded mobile tab wakes back up — which is
+// exactly when a mobile Parent Zone session (unlike the always-foregrounded
+// kiosk tablets) most needs to re-check its realtime connection and catch
+// up on anything it missed while suspended.
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='visible' && state){
+    subscribeRealtime();
+    scheduleRefetch();
+  }
+});
 
 /* ---------- date helpers ---------- */
 function dateKey(d){
@@ -918,6 +960,18 @@ function pressPinKey(k){
         hideLockScreen();
         resetAppIdleTimer();
         if(pinContext && pinContext.type==='child'){ switchChild(pinContext.childId); }
+        else if(pinContext && pinContext.type==='parentUnlock'){
+          // Logging in as a parent from the lock screen no longer jumps
+          // straight into Parent Zone — it lands on whatever child was last
+          // active (same view that child would see), so which child's
+          // settings you're about to open is deliberate rather than
+          // whatever was masked behind the overlay. parentSessionActive
+          // still gets set here (openParent() isn't the only place that
+          // does it now) so the header lock icon and child-switcher
+          // bypasses work immediately, without a second PIN entry.
+          parentSessionActive = true;
+          render();
+        }
         else { openParent(); }
       } else {
         const newFails = lock.fails + 1;
@@ -1032,7 +1086,7 @@ function renderLockScreen(){
     b.onclick=()=>openPin({type:'child', childId:b.dataset.lockChild});
   });
   const parentTile = grid.querySelector('[data-lock-parent]');
-  if(parentTile) parentTile.onclick=()=>openPin({type:'parent'});
+  if(parentTile) parentTile.onclick=()=>openPin({type:'parentUnlock'});
 }
 
 const LOCK_TAGLINES = [
@@ -3218,6 +3272,7 @@ async function afterAuth(){
     scheduleMidnightRefresh();
     subscribeRealtime();
     startAppIdleWatch();
+    startPeriodicResync();
   }catch(err){
     console.error('boot error', err);
     document.getElementById('loadingSub').textContent = 'Connection problem — retrying…';
@@ -3287,7 +3342,7 @@ document.getElementById('pipNotifyDismiss').addEventListener('click', dismissNot
 document.getElementById('pipNotifyOverlay').addEventListener('click', (e)=>{ if(e.target.id==='pipNotifyOverlay') dismissNotification(); });
 
 let view = 'home';
-let pinContext = null;   // {type:'parent'} | {type:'child', childId}
+let pinContext = null;   // {type:'parent'} | {type:'parentUnlock'} | {type:'child', childId}
 let pinBuffer = '';
 let activeParentTab = 'approve';
 let historyMode = 'week';     // 'week' | 'month'
