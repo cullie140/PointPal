@@ -62,6 +62,10 @@ function makeChild(id, name){
     pin: (state && state.pin) || '1234',
     points: 0,
     minutes: 0,
+    lifetimePoints: 0,          // never decreases (except a parent's explicit correction) — drives level/cosmetic unlocks
+    levelThresholds: [],        // per-child point costs to reach level 1, 2, 3, ... — empty until a parent sets some
+    levelingEnabled: false,     // per-child on/off switch, see PIP LEVELING & COSMETICS
+    equippedCosmetics: {},      // {slot: itemId} — see PIP_COSMETICS
     weekStart: null,          // ISO date (Monday) this week's streak is counted against
     goalPrizeId: null,        // prize the child has pinned as their savings goal
     chores,
@@ -130,6 +134,10 @@ function rowsToChild(childRow, chores, prizes, challenges, punishments, entries,
     pin: childRow.pin || null,
     points: childRow.points,
     minutes: childRow.minutes,
+    lifetimePoints: childRow.lifetime_points || 0,
+    levelThresholds: childRow.level_thresholds || [], // no substitute default — empty means "not configured yet" and level always reads 0
+    levelingEnabled: !!childRow.leveling_enabled,
+    equippedCosmetics: childRow.equipped_cosmetics || {},
     weekStart: childRow.week_start,
     goalPrizeId: childRow.goal_prize_id || null,
     chores: chores.filter(c=>c.child_id===childRow.id).map(c=>({id:c.id, label:c.label, emoji:c.emoji, amount:c.amount, currency:c.currency, repeatable:c.repeatable, schedule:c.schedule||undefined, sortOrder:c.sort_order==null?null:Number(c.sort_order)})).sort(bySortOrder),
@@ -630,6 +638,122 @@ function maybeQueueGoalProgress(c, pointsBefore, e){
   };
 }
 
+/* ============ PIP LEVELING & COSMETICS ============ */
+// The ladder of levels (and which cosmetics sit at which level) is shared
+// across every child — same catalog for everyone — but the *point cost* to
+// climb it is per-child (levelThresholds), so an older/higher-earning kid
+// doesn't blow through every level in a week while a younger sibling never
+// levels up. Level is always derived fresh from lifetimePoints vs
+// levelThresholds — never cached — so nothing needs to stay in sync if a
+// threshold or lifetimePoints itself ever changes after the fact.
+//
+// levelingEnabled is a per-child on/off switch (Settings → Profile), not a
+// single global flag — lifetimePoints still quietly accumulates in the
+// background regardless (harmless, invisible — real progress isn't lost
+// while off) but maybeQueueLevelUp() never queues the notification for a
+// child whose switch is off, so no kid sees the level-up screen until
+// there's real cosmetic art to show them (or until a parent deliberately
+// wants it off for some other reason later — a test child, a break from a
+// feature, whatever comes up). One thing to remember when flipping a
+// child's switch on: only the level crossed by the *next* approval after
+// that gets announced — if they silently climbed several levels while it
+// was off, those earlier ones won't get their own retroactive level-up
+// moment, only whichever one the next approval happens to cross.
+// levelThresholds itself has no substitute default either (see
+// rowsToChild()) — a child with none configured just always reads level 0,
+// rather than every child silently inheriting some example ladder.
+const DEFAULT_LEVEL_THRESHOLDS_SUGGESTION = [250, 750, 1500, 3000, 5000]; // shown as the thresholds input's placeholder only — never applied to real data
+
+function childLevel(c){
+  const thresholds = c.levelThresholds || [];
+  let level = 0;
+  for(const t of thresholds){ if(c.lifetimePoints >= t) level++; else break; }
+  return level;
+}
+
+const PIP_COSMETIC_SLOTS = [
+  {id:'head', label:'Head'},
+  {id:'shoes', label:'Shoes'},
+  {id:'props', label:'Props'},
+  {id:'background', label:'Background'},
+  {id:'core', label:'Point Core'}
+];
+
+// Placeholder catalog — `swatch`+`color` stand in for real art until a
+// `file` (transparent PNG, same convention as pip-*.png) is dropped in and
+// added here; cosmeticItemVisual() below prefers `file` over the swatch
+// automatically, so wiring in real art later never needs touching the
+// selector UI itself. Every slot has a level-0 "None" option always
+// available, matching how Pip looks today with nothing equipped.
+const PIP_COSMETICS = {
+  head: [
+    {id:'head-none', label:'None', level:0, swatch:'—', color:'#DCEBF0'},
+    {id:'head-cap', label:'Baseball Cap', level:1, swatch:'🧢', color:'#FFC94A'},
+    {id:'head-goggles', label:'Adventure Goggles', level:2, swatch:'🥽', color:'#35C6B4'},
+    {id:'head-crown', label:'Crown', level:3, swatch:'👑', color:'#FFD700'}
+  ],
+  shoes: [
+    {id:'shoes-none', label:'None', level:0, swatch:'—', color:'#DCEBF0'},
+    {id:'shoes-sneakers', label:'Sneakers', level:1, swatch:'👟', color:'#FF796F'},
+    {id:'shoes-boots', label:'Adventure Boots', level:2, swatch:'🥾', color:'#7A67E8'},
+    {id:'shoes-rocket', label:'Rocket Shoes', level:3, swatch:'🚀', color:'#243B6B'}
+  ],
+  props: [
+    {id:'props-none', label:'None', level:0, swatch:'—', color:'#DCEBF0'},
+    {id:'props-bike', label:'Bike', level:1, swatch:'🚲', color:'#35C6B4'},
+    {id:'props-skateboard', label:'Skateboard', level:2, swatch:'🛹', color:'#FF796F'},
+    {id:'props-cape', label:'Cape', level:3, swatch:'🦸', color:'#7A67E8'}
+  ],
+  background: [
+    {id:'background-none', label:'None', level:0, swatch:'—', color:'#DCEBF0'},
+    {id:'background-sky', label:'Sunny Sky', level:1, swatch:'☀️', color:'#FFC94A'},
+    {id:'background-space', label:'Starry Space', level:2, swatch:'🌌', color:'#243B6B'},
+    {id:'background-rainbow', label:'Rainbow', level:3, swatch:'🌈', color:'#7A67E8'}
+  ],
+  core: [
+    {id:'core-none', label:'Classic Glow', level:0, swatch:'✨', color:'#FFC94A'},
+    {id:'core-blue', label:'Cool Blue Core', level:1, swatch:'💠', color:'#35C6B4'},
+    {id:'core-rainbow', label:'Rainbow Core', level:2, swatch:'🌟', color:'#7A67E8'},
+    {id:'core-fire', label:'Blazing Core', level:3, swatch:'🔥', color:'#FF796F'}
+  ]
+};
+
+function cosmeticItem(slot, itemId){
+  return (PIP_COSMETICS[slot]||[]).find(i=>i.id===itemId) || null;
+}
+// Cumulative: reaching level 2 unlocks everything tagged level 1 *and* 2,
+// across every slot — not just what's new this level.
+function isCosmeticUnlocked(item, level){ return item.level <= level; }
+
+async function equipCosmetic(childId, slot, itemId){
+  if(!requireOnline()) return;
+  const c = state.children.find(x=>x.id===childId);
+  if(!c) return;
+  const item = cosmeticItem(slot, itemId);
+  if(!item || !isCosmeticUnlocked(item, childLevel(c))) return;
+  c.equippedCosmetics = c.equippedCosmetics || {};
+  c.equippedCosmetics[slot] = itemId;
+  render();
+  try{ await sb.from('children').update({equipped_cosmetics: c.equippedCosmetics}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
+}
+
+// Queues a 'levelup' notification the moment a points-earning approval
+// pushes lifetimePoints across one of this child's own levelThresholds.
+// Unlike goal progress, this can only ever fire forward — lifetimePoints
+// itself never decreases from spending (see approveEntry) — so there's no
+// "never flags a setback" guard needed here the way maybeQueueGoalProgress
+// has one.
+function maybeQueueLevelUp(c, lifetimeBefore){
+  if(!c.levelingEnabled) return null;
+  const beforeLevel = childLevel(Object.assign({}, c, {lifetimePoints: lifetimeBefore}));
+  const afterLevel = childLevel(c);
+  if(afterLevel <= beforeLevel) return null;
+  return {
+    id: uid(), kind:'levelup', label:`Level ${afterLevel}`, emoji:'🎉',
+    amount: afterLevel, currency: null, message: null, ts: Date.now()
+  };
+}
+
 async function approveEntry(id, opts){
   if(!connectionOk){ if(!(opts && opts.silent)) toast('Offline — try again once reconnected'); return; }
   const owner = findEntryOwner(id);
@@ -640,12 +764,13 @@ async function approveEntry(id, opts){
   e.status='approved';
 
   const pointsBefore = c.points;
+  const lifetimeBefore = c.lifetimePoints;
   if(e.kind==='chore' || e.kind==='bonus'){
-    if(e.currency==='points') c.points += e.amount;
+    if(e.currency==='points'){ c.points += e.amount; c.lifetimePoints += e.amount; }
     else c.minutes += e.amount;
     burstConfetti();
   } else if(e.kind==='redeem'){
-    c.points -= e.amount;
+    c.points -= e.amount; // spendable only — lifetimePoints (and thus level) never regresses on a redemption
     burstConfetti();
   }
 
@@ -660,6 +785,9 @@ async function approveEntry(id, opts){
   const goalNotif = maybeQueueGoalProgress(c, pointsBefore, e);
   if(goalNotif) c.notifications.push(goalNotif);
 
+  const levelUpNotif = maybeQueueLevelUp(c, lifetimeBefore);
+  if(levelUpNotif) c.notifications.push(levelUpNotif);
+
   const newBonuses = checkChallengesForApproval(c, e, 'pending');
   if(newBonuses.length){
     if(lastActionSnapshot) newBonuses.forEach(b=>lastActionSnapshot.extraEntryIds.push(b.id));
@@ -669,9 +797,10 @@ async function approveEntry(id, opts){
 
   try{
     await sb.from('entries').update({status:'approved'}).eq('id', id).throwOnError();
-    await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id).throwOnError();
+    await sb.from('children').update({points:c.points, minutes:c.minutes, lifetime_points:c.lifetimePoints}).eq('id', c.id).throwOnError();
     await sb.from('notifications').insert(toNotificationRow(notif, c.id)).throwOnError();
     if(goalNotif) await sb.from('notifications').insert(toNotificationRow(goalNotif, c.id)).throwOnError();
+    if(levelUpNotif) await sb.from('notifications').insert(toNotificationRow(levelUpNotif, c.id)).throwOnError();
     for(const b of newBonuses) await sb.from('entries').insert(toEntryRow(b, c.id)).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
@@ -710,6 +839,12 @@ function reverseApprovedEffect(c, e){
   if(e.kind==='chore' || e.kind==='bonus'){
     if(e.currency==='points'){
       c.points = Math.max(0, c.points - e.amount);
+      // lifetimePoints normally never regresses (see approveEntry), but an
+      // explicit parent correction of a wrongly-approved entry is the one
+      // deliberate exception — the "achievement" it counted toward was a
+      // mistake, not real progress, so the level/unlock ladder shouldn't
+      // remember it either.
+      c.lifetimePoints = Math.max(0, c.lifetimePoints - e.amount);
     } else {
       c.minutes = Math.max(0, c.minutes - (e.amount - (e.minutesUsed||0)));
     }
@@ -738,7 +873,7 @@ async function unapproveEntry(id){
   renderParentBody(); render();
   try{
     await sb.from('entries').update({status:'pending', fulfilled:false, minutes_used:0}).eq('id', id).throwOnError();
-    await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id).throwOnError();
+    await sb.from('children').update({points:c.points, minutes:c.minutes, lifetime_points:c.lifetimePoints}).eq('id', c.id).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
 
@@ -757,7 +892,7 @@ async function deleteEntryPermanently(id){
   renderParentBody(); render();
   try{
     await sb.from('entries').delete().eq('id', id).throwOnError();
-    if(e.status==='approved') await sb.from('children').update({points:c.points, minutes:c.minutes}).eq('id', c.id).throwOnError();
+    if(e.status==='approved') await sb.from('children').update({points:c.points, minutes:c.minutes, lifetime_points:c.lifetimePoints}).eq('id', c.id).throwOnError();
   }catch(err){ handleSyncError(err); }
 }
 
@@ -1782,7 +1917,8 @@ const PIP_VOICE_CATEGORY_LABELS = {
   redeem: 'Redeem — prize approved',
   comeback: 'Comeback — punishment lifted',
   goal: 'Goal progress — crosses 25/50/75/100% of a savings goal',
-  streak: 'Streak — a challenge bonus is approved'
+  streak: 'Streak — a challenge bonus is approved',
+  levelup: 'Level Up — Pip reaches a new level'
 };
 
 function settingsVoiceLinesHTML(){
@@ -1856,12 +1992,17 @@ function settingsProfileHTML(){
       </div>
       <div class="item-row-meta">
         <input class="settings-input" data-child-pin="${c.id}" value="${c.pin||''}" maxlength="4" inputmode="numeric" placeholder="PIN">
+        <input class="child-name-input" data-child-level-thresholds="${c.id}" value="${(c.levelThresholds||[]).join(', ')}" placeholder="e.g. ${DEFAULT_LEVEL_THRESHOLDS_SUGGESTION.join(', ')}" style="flex:1; min-width:160px;">
+        <label class="inline-check">
+          <input type="checkbox" data-child-leveling-enabled="${c.id}" ${c.levelingEnabled?'checked':''}>
+          Pip leveling
+        </label>
       </div>
     </div>
   `).join('');
   return `
     <div class="settings-label">Children</div>
-    <div class="sheet-sub" style="margin-bottom:8px;">Switch between kids using the tabs at the top of Home. Each child needs their own 4-digit PIN to switch into their view.</div>
+    <div class="sheet-sub" style="margin-bottom:8px;">Switch between kids using the tabs at the top of Home. Each child needs their own 4-digit PIN to switch into their view. The comma-separated numbers are how many lifetime points that child needs to reach level 1, 2, 3, and so on — set them differently per child so an older or higher-earning kid doesn't blow through every Pip upgrade in a week. Leave it blank and "Pip leveling" off for a child you're not ready to turn this on for yet — nothing fires either way until both a threshold list exists <i>and</i> the switch is on.</div>
     ${rows}
     <div class="add-row" style="flex-wrap:wrap;">
       <input id="newChildName" class="child-name-input" placeholder="Add a child" style="flex:1; margin-top:10px;">
@@ -2420,6 +2561,34 @@ function wireParentBody(){
       }
     };
   });
+  document.querySelectorAll('[data-child-level-thresholds]').forEach(inp=>{
+    inp.onchange=async ()=>{
+      const c = state.children.find(x=>x.id===inp.dataset.childLevelThresholds);
+      if(!c || !requireOnline()) return;
+      // Empty is valid here (and clears back to it) — it just means "not
+      // configured," matching levelingEnabled's own off-by-default safety
+      // net, not an error to reject. Only genuine garbage (non-empty input
+      // that parses to nothing) gets rejected instead of silently saved.
+      const trimmed = inp.value.trim();
+      const parsed = trimmed
+        ? trimmed.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n) && n>=0).sort((a,b)=>a-b)
+        : [];
+      if(trimmed && !parsed.length){ inp.value = (c.levelThresholds||[]).join(', '); toast('Enter numbers separated by commas, or clear the field entirely'); return; }
+      c.levelThresholds = parsed;
+      inp.value = parsed.join(', ');
+      render();
+      try{ await sb.from('children').update({level_thresholds:parsed}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
+    };
+  });
+  document.querySelectorAll('[data-child-leveling-enabled]').forEach(cb=>{
+    cb.onchange=async ()=>{
+      const c = state.children.find(x=>x.id===cb.dataset.childLevelingEnabled);
+      if(!c || !requireOnline()){ cb.checked = c ? c.levelingEnabled : false; return; }
+      c.levelingEnabled = cb.checked;
+      render();
+      try{ await sb.from('children').update({leveling_enabled:cb.checked}).eq('id', c.id).throwOnError(); }catch(err){ handleSyncError(err); }
+    };
+  });
   document.querySelectorAll('[data-child-del]').forEach(b=>{
     b.onclick=async ()=>{
       if(!requireOnline()) return;
@@ -2474,12 +2643,14 @@ function wireParentBody(){
       child.points = 0;
       child.minutes = 0;
       child.goalPrizeId = null;
+      child.lifetimePoints = 0;      // resets Pip's level back to 0 too (childLevel() derives from this)
+      child.equippedCosmetics = {};
       ensureWeek(child);
       closeParent(); render();
       try{
         await sb.from('entries').delete().eq('child_id', child.id).throwOnError();
         await sb.from('punishments').delete().eq('child_id', child.id).throwOnError();
-        await sb.from('children').update({points:0, minutes:0, goal_prize_id: null}).eq('id', child.id).throwOnError();
+        await sb.from('children').update({points:0, minutes:0, goal_prize_id: null, lifetime_points:0, equipped_cosmetics:{}}).eq('id', child.id).throwOnError();
       }catch(err){ handleSyncError(err); }
     }
   };
@@ -3050,10 +3221,10 @@ const PIP_VOICE_CLOSERS = [];
 // (pickNameClip), since a name clip belongs to one specific kid, not a kind
 // of moment. Supports multiple clips per child (a random one is picked).
 const PIP_VOICE_NAMES = [];
-const PIP_VOICE_CONTEXT = { points: [], minutes: [], redeem: [], comeback: [], goal: [], streak: [] };
+const PIP_VOICE_CONTEXT = { points: [], minutes: [], redeem: [], comeback: [], goal: [], streak: [], levelup: [] };
 const PIP_VOICE_GAP_MS = 120;
 const PIP_VOICE_BEAT_CHANCE = 0.7; // chance an opener/closer plays at all
-const PIP_VOICE_CATEGORIES = ['name', 'opener', 'closer', 'points', 'minutes', 'redeem', 'comeback', 'goal', 'streak'];
+const PIP_VOICE_CATEGORIES = ['name', 'opener', 'closer', 'points', 'minutes', 'redeem', 'comeback', 'goal', 'streak', 'levelup'];
 const VOICE_FILES_FOLDER = 'voices';
 const VOICE_FILES_API_URL = 'https://api.github.com/repos/cullie140/PointPal/contents/' + VOICE_FILES_FOLDER;
 let voiceFileOptions = null; // null = not fetched yet this session; [] once loaded (possibly empty)
@@ -3070,7 +3241,7 @@ let pipOpenerPlayed = false;
 // Rebuilds the in-memory banks above from state.voiceLines — call after any
 // fetch/realtime refresh and after a local add/delete in the admin tab.
 function rebuildVoiceBanks(){
-  const byCategory = { name:[], opener:[], closer:[], points:[], minutes:[], redeem:[], comeback:[], goal:[], streak:[] };
+  const byCategory = { name:[], opener:[], closer:[], points:[], minutes:[], redeem:[], comeback:[], goal:[], streak:[], levelup:[] };
   (state.voiceLines||[]).forEach(v=>{
     if(byCategory[v.category]) byCategory[v.category].push({file: VOICE_FILES_FOLDER+'/'+v.file, text:v.text});
   });
@@ -3156,6 +3327,7 @@ function deliverPendingNotifications(){
 function showNextNotification(){
   if(!child.notifications.length){ document.getElementById('pipNotifyOverlay').classList.remove('show'); return; }
   const n = child.notifications[0];
+  if(n.kind==='levelup'){ showLevelUpOverlay(n); return; } // its own full-screen overlay, deliberately not the standard modal — see dismissLevelUp()
   const img = document.getElementById('pipNotifyImg');
   const title = document.getElementById('pipNotifyTitle');
   const body = document.getElementById('pipNotifyBody');
@@ -3225,8 +3397,62 @@ async function dismissNotification(){
     await new Promise(r=>setTimeout(r, (count-1)*REWARD_FLY_STAGGER_MS + REWARD_FLY_LAUNCH_HOLD_MS));
   }
   if(child.notifications.length){ showNextNotification(); }
+  else if(n.kind==='levelup'){ document.getElementById('levelUpOverlay').classList.remove('show'); }
   else { document.getElementById('pipNotifyOverlay').classList.remove('show'); }
   try{ await sb.from('notifications').delete().eq('id', n.id).throwOnError(); }catch(err){ handleSyncError(err); }
+}
+
+/* ============ LEVEL-UP OVERLAY (deliberately not the standard modal) ============ */
+// A kid can only ever change Pip's cosmetics from here — there's no
+// standalone "customizer" menu — so this doubles as both the celebration
+// moment and the full multi-slot avatar selector, showing everything
+// unlocked so far (not just what's new this level), live-updating as they
+// tap through slots/items. Full-bleed and visually distinct from
+// #pipNotifyOverlay on purpose, per the "kids fast-tap through the regular
+// notification" concern this was built to avoid.
+let levelUpActiveSlot = 'head';
+
+function showLevelUpOverlay(n){
+  levelUpActiveSlot = 'head';
+  document.getElementById('levelUpTitle').textContent = n.label;
+  const spoken = playPipVoice('levelup');
+  document.getElementById('levelUpSpoken').textContent = spoken || '';
+  renderLevelUpOverlay();
+  document.getElementById('levelUpOverlay').classList.add('show');
+}
+
+function renderLevelUpOverlay(){
+  const level = childLevel(child);
+  const equipped = child.equippedCosmetics || {};
+
+  const badges = PIP_COSMETIC_SLOTS.map(s=>{
+    const item = cosmeticItem(s.id, equipped[s.id]) || (PIP_COSMETICS[s.id]||[])[0];
+    return `<div class="level-up-badge level-up-badge-${s.id}" style="--badge-color:${item?item.color:'#DCEBF0'}" title="${s.label}">${item?item.swatch:''}</div>`;
+  }).join('');
+  document.getElementById('levelUpSwatchLayer').innerHTML = badges;
+
+  document.getElementById('levelUpSlotTabs').innerHTML = PIP_COSMETIC_SLOTS.map(s=>
+    `<button class="level-up-slot-tab ${s.id===levelUpActiveSlot?'active':''}" data-levelup-slot="${s.id}">${s.label}</button>`
+  ).join('');
+
+  const items = PIP_COSMETICS[levelUpActiveSlot] || [];
+  const equippedId = equipped[levelUpActiveSlot];
+  document.getElementById('levelUpItemGrid').innerHTML = items.map(item=>{
+    const unlocked = isCosmeticUnlocked(item, level);
+    const isEquipped = equippedId ? equippedId===item.id : item.level===0;
+    return `
+      <button class="level-up-item ${isEquipped?'equipped':''} ${unlocked?'':'locked'}" data-levelup-item="${item.id}" style="--item-color:${item.color}" ${unlocked?'':'disabled'}>
+        <div class="level-up-item-swatch">${unlocked ? item.swatch : '🔒'}</div>
+        <div class="level-up-item-label">${unlocked ? item.label : `Level ${item.level}`}</div>
+      </button>`;
+  }).join('');
+
+  document.querySelectorAll('[data-levelup-slot]').forEach(b=>{
+    b.onclick=()=>{ levelUpActiveSlot = b.dataset.levelupSlot; renderLevelUpOverlay(); };
+  });
+  document.querySelectorAll('[data-levelup-item]').forEach(b=>{
+    b.onclick=async ()=>{ await equipCosmetic(child.id, levelUpActiveSlot, b.dataset.levelupItem); renderLevelUpOverlay(); };
+  });
 }
 
 function timeAgo(ts){
@@ -3339,6 +3565,7 @@ document.getElementById('limitOverlay').addEventListener('click', (e)=>{ if(e.ta
 document.getElementById('limitSaveBtn').addEventListener('click', saveLimit);
 document.getElementById('undoToastBtn').addEventListener('click', performUndo);
 document.getElementById('pipNotifyDismiss').addEventListener('click', dismissNotification);
+document.getElementById('levelUpDoneBtn').addEventListener('click', dismissNotification);
 document.getElementById('pipNotifyOverlay').addEventListener('click', (e)=>{ if(e.target.id==='pipNotifyOverlay') dismissNotification(); });
 
 let view = 'home';

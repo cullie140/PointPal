@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pointpal-cache-v87';
+const CACHE_NAME = 'pointpal-cache-v90';
 const ASSETS = [
   './',
   './index.html',
